@@ -1,25 +1,41 @@
 // Dynamic grammar evaluator for sentence building practice
 // Provides accurate, context-aware analysis without false positives
 
+export type ErrorType = 'Spelling' | 'Grammar' | 'Structure' | 'Collocation';
+
+export interface DetectedError {
+  type: ErrorType;
+  incorrectPart: string;
+  correction: string;
+  explanationVi: string;
+}
+
+export interface NativeAlternative {
+  sentence: string;
+  translation: string;
+  explanation: string;
+}
+
 export interface GrammarError {
   message: string;
   explanation: string;
 }
 
-export interface ImprovedSentence {
-  en: string;
-  vi: string;
-}
-
 export interface GrammarEvaluation {
   accuracy: number;
+  isSpellingCorrect: boolean;
   isGrammarCorrect: boolean;
   isNatural: boolean;
-  errors: GrammarError[];
+  detectedErrors: DetectedError[];
+  detailedAnalysisVi: string;
+  nativeAlternatives: NativeAlternative[];
+  grammarRulesBreakdown: string;
+  // Legacy compat fields used by local fallback
+  errors: { message: string; explanation: string }[];
   feedback: string;
   improved: string;
   improvedTranslation: string;
-  improvedSentences: ImprovedSentence[];
+  improvedSentences: { en: string; vi: string }[];
   grammarStructure: string;
 }
 
@@ -610,8 +626,13 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
   if (!trimmed) {
     return {
       accuracy: 0,
+      isSpellingCorrect: false,
       isGrammarCorrect: false,
       isNatural: false,
+      detectedErrors: [],
+      detailedAnalysisVi: lang === 'en' ? 'Please write a sentence.' : 'Vui lòng viết một câu.',
+      nativeAlternatives: [],
+      grammarRulesBreakdown: '',
       errors: [],
       feedback: lang === 'en' ? 'Please write a sentence.' : 'Vui lòng viết một câu.',
       improved: '',
@@ -689,10 +710,22 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
     feedback = allErrors.map((e) => `• ${e.message}`).join('\n');
   }
 
+  const detectedErrors: DetectedError[] = allErrors.map((e) => ({
+    type: 'Grammar' as ErrorType,
+    incorrectPart: e.message,
+    correction: e.explanation,
+    explanationVi: e.explanation,
+  }));
+
   return {
     accuracy,
+    isSpellingCorrect: true,
     isGrammarCorrect: allErrors.length === 0,
     isNatural: allErrors.length === 0,
+    detectedErrors,
+    detailedAnalysisVi: feedback,
+    nativeAlternatives: [{ sentence: model.improved, translation: model.translation, explanation: '' }],
+    grammarRulesBreakdown: model.structure,
     errors: allErrors,
     feedback,
     improved: model.improved,

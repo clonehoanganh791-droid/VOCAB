@@ -164,6 +164,15 @@ export const translations = {
     grammarIncorrect: 'Grammar Issues',
     advancedExamples: 'Advanced Native Examples',
     advancedExamplesDesc: 'Natural alternative sentences using this word',
+    spellingBadge: 'Spelling',
+    spellingCorrect: 'No typos',
+    spellingIncorrect: 'Typos found',
+    detectedErrorsTitle: 'Detected Errors',
+    detailedAnalysis: 'Detailed AI Analysis',
+    nativeAlternativesTitle: 'Native Alternatives',
+    nativeAlternativesDesc: 'Improved sentences with pronunciation',
+    correction: 'Correction',
+    explanation: 'Explanation',
 
     // Analytics
     analyticsTitle: 'Skill Analytics',
@@ -390,6 +399,15 @@ export const translations = {
     grammarIncorrect: 'Lỗi ngữ pháp',
     advancedExamples: 'Gợi ý nâng cao & Ví dụ chuẩn bản ngữ',
     advancedExamplesDesc: 'Các câu thay thế tự nhiên sử dụng từ này',
+    spellingBadge: 'Chính tả',
+    spellingCorrect: 'Không sai chính tả',
+    spellingIncorrect: 'Có lỗi chính tả',
+    detectedErrorsTitle: 'Danh sách lỗi phát hiện',
+    detailedAnalysis: 'Phân tích chi tiết từ AI',
+    nativeAlternativesTitle: 'Gợi ý cải thiện & Mẫu câu chuẩn bản ngữ',
+    nativeAlternativesDesc: 'Các câu thay thế kèm phát âm',
+    correction: 'Sửa thành',
+    explanation: 'Giải thích',
 
     // Analytics
     analyticsTitle: 'Phân tích kỹ năng',

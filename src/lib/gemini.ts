@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Language } from './types';
-import type { GrammarEvaluation } from './grammarCheck';
+import type { GrammarEvaluation, DetectedError, NativeAlternative, ErrorType } from './grammarCheck';
 
 const FALLBACK_API_KEY = 'AQ.Ab8RN6KeCsGvlXT4rIJAWqHlAXLGLEGAaGUPZbMnr5oyNK7btw';
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || FALLBACK_API_KEY;
@@ -13,32 +13,47 @@ const responseSchema = {
   type: Type.OBJECT,
   properties: {
     accuracyScore: { type: Type.NUMBER },
+    isSpellingCorrect: { type: Type.BOOLEAN },
     isGrammarCorrect: { type: Type.BOOLEAN },
     isNatural: { type: Type.BOOLEAN },
     isTargetWordUsed: { type: Type.BOOLEAN },
-    errorsFound: { type: Type.ARRAY, items: { type: Type.STRING } },
-    detailedFeedback: { type: Type.STRING },
-    improvedSentences: {
+    detectedErrors: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
         properties: {
-          en: { type: Type.STRING },
-          vi: { type: Type.STRING },
+          type: { type: Type.STRING },
+          incorrectPart: { type: Type.STRING },
+          correction: { type: Type.STRING },
+          explanationVi: { type: Type.STRING },
         },
-        required: ['en', 'vi'],
+        required: ['type', 'incorrectPart', 'correction', 'explanationVi'],
       },
     },
-    grammarBreakdown: { type: Type.STRING },
+    detailedAnalysisVi: { type: Type.STRING },
+    nativeAlternatives: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          sentence: { type: Type.STRING },
+          translation: { type: Type.STRING },
+          explanation: { type: Type.STRING },
+        },
+        required: ['sentence', 'translation', 'explanation'],
+      },
+    },
+    grammarRulesBreakdown: { type: Type.STRING },
   },
   required: [
     'accuracyScore',
+    'isSpellingCorrect',
     'isGrammarCorrect',
     'isNatural',
-    'errorsFound',
-    'detailedFeedback',
-    'improvedSentences',
-    'grammarBreakdown',
+    'detectedErrors',
+    'detailedAnalysisVi',
+    'nativeAlternatives',
+    'grammarRulesBreakdown',
   ],
 };
 
@@ -53,48 +68,62 @@ export async function evaluateWithGemini(params: {
   meaning: string;
   lang: Language;
 }): Promise<GrammarEvaluation> {
-  const { sentence, targetWord, wordType, meaning, lang } = params;
-  const isVi = lang === 'vi';
+  const { sentence, targetWord, wordType, meaning } = params;
 
-  const prompt = `You are a senior English language expert and pedagogical evaluator for a vocabulary learning app. The user is practicing using the target word "${targetWord}" (part of speech: ${wordType}, meaning: ${meaning}) in a sentence.
+  const prompt = `You are a senior English language expert and strict pedagogical evaluator for a vocabulary learning app. The user is practicing using the target word "${targetWord}" (part of speech: ${wordType}, meaning: ${meaning}) in a sentence.
 
 Evaluate the sentence: "${sentence}"
 
-You must analyze the sentence on TWO independent levels:
+You MUST perform a 3-step verification pipeline before calculating scores:
 
-1. Grammar Accuracy (Đúng/Sai ngữ pháp):
-   - Check basic grammar correctness: subject-verb agreement, articles, tense, word order, spelling, punctuation.
-   - isGrammarCorrect = true only if there are zero grammar errors.
+STEP 1 — Spelling & Typo Scan:
+- Scan character-by-character for any misspelled words or typos.
+- If ANY typo exists (e.g., "verry" -> "very", "hav" -> "have"), set isSpellingCorrect = false and immediately cap accuracyScore below 50.
+- List each spelling error in detectedErrors with type "Spelling".
 
-2. Naturalness / Collocation (Độ tự nhiên bản ngữ):
-   - Evaluate whether a native English speaker would actually use this phrasing.
-   - Flag awkward or unnatural collocations even if grammatically correct.
-   - Example: "I have emotional growth" is grammatically correct but unnatural — a native speaker would say "I have experienced emotional growth" or "I have grown emotionally".
-   - isNatural = true only if the sentence sounds natural and idiomatic to a native speaker.
+STEP 2 — Structural & Grammar Check:
+- Verify basic syntax integrity: the sentence must have at least Subject + Main Verb + Object/Complement.
+- Check subject-verb agreement, articles, tense consistency, preposition usage, word order.
+- If the sentence lacks a main verb, uses wrong tenses, or misuses prepositions, set isGrammarCorrect = false.
+- List each grammar error in detectedErrors with type "Grammar" or "Structure".
 
-Scoring:
-- accuracyScore (0-100): Start at 100. Deduct for grammar errors AND for unnatural phrasing. A grammatically correct but unnatural sentence should score no higher than 75.
+STEP 3 — Target Word & Native Collocation:
+- Verify the target word "${targetWord}" is used in its correct semantic context.
+- Evaluate whether the phrasing is natural for native English speakers (isNatural).
+- Flag awkward collocations even if grammatically correct (e.g., "I have emotional growth" is grammatically correct but unnatural — suggest "experience emotional growth" or "grow emotionally").
+- List collocation issues in detectedErrors with type "Collocation".
 
-errorsFound: List each specific grammar, spelling, article, or unnaturalness error as a concise string. Include collocation issues (e.g., "Unnatural collocation: 'have emotional growth' — use 'experience emotional growth' or 'grow emotionally'").
+SCORING:
+- accuracyScore (0-100): Start at 100. Deduct for spelling errors (major), grammar errors (moderate), and unnatural phrasing (moderate).
+- If any spelling error exists, cap accuracyScore below 50.
+- A grammatically correct but unnatural sentence should score no higher than 75.
 
-detailedFeedback: Provide a thorough pedagogical breakdown in ${isVi ? 'Vietnamese' : 'English'}. Structure it with clear sections:
-  - "Ngữ pháp" (Grammar): Explain what is correct or incorrect.
-  - "Collocation & Tự nhiên" (Collocation & Naturalness): Explain natural word pairings, why the phrasing sounds awkward or natural, and suggest better collocations.
-  - "Tone & Phong cách" (Tone & Style): Comment on register and tone if relevant.
-  Use bullet points (•) for readability.
+detectedErrors: Array of objects, each with:
+  - type: "Spelling" | "Grammar" | "Structure" | "Collocation"
+  - incorrectPart: the exact word/phrase from the user's input that is wrong
+  - correction: the corrected word/phrase
+  - explanationVi: detailed explanation in Vietnamese of why it is wrong and the grammar/spelling rule
 
-improvedSentences: Provide 2-3 natural, native-like alternative sentences using the target word. Each must include:
-  - "en": the English sentence
-  - "vi": the ${isVi ? 'Vietnamese translation' : 'Vietnamese translation'}
-  Make these sentences varied in structure and tone to give the learner options.
+detailedAnalysisVi: Comprehensive analysis in Vietnamese covering:
+  - Điểm tốt (Strengths): what the user did well
+  - Điểm cần cải thiện (Areas to improve): specific issues
+  - Phối hợp từ (Collocation): natural word pairings
+  - Sắc thái biểu đạt (Tone/Register): register and tone if relevant
+  Use bullet points (•) and section headers for readability.
 
-grammarBreakdown: Detailed explanation of key grammar structures, advanced verbs, prepositions, and collocations used in the recommended sentences. Write in ${isVi ? 'Vietnamese' : 'English'}.
+nativeAlternatives: 2-3 natural, native-like alternative sentences using the target word. Each with:
+  - sentence: the English sentence
+  - translation: Vietnamese translation
+  - explanation: why this sentence is more natural/better in real communication, or what advanced grammar/vocabulary it uses
+  Vary the structure and formality level across alternatives.
+
+grammarRulesBreakdown: Summary of core grammar structures found in the example sentences, in Vietnamese.
 
 Rules:
 - isTargetWordUsed: true if any form of "${targetWord}" appears (case-insensitive, including plurals, conjugations, slash-separated variants)
 - If the target word contains slashes or parentheses, split into options and accept any match
 - Be precise — do NOT report false positives for correctly capitalized "I" or correct article usage
-- Keep responses concise but educational`;
+- Keep responses thorough but concise`;
 
   let lastError: Error | null = null;
 
@@ -115,26 +144,46 @@ Rules:
 
       const parsed = JSON.parse(text);
 
-      const improvedSentences = (parsed.improvedSentences || []).map(
-        (s: { en: string; vi: string }) => ({ en: s.en || '', vi: s.vi || '' })
+      const detectedErrors: DetectedError[] = (parsed.detectedErrors || []).map(
+        (e: { type: string; incorrectPart: string; correction: string; explanationVi: string }) => ({
+          type: (e.type as ErrorType) || 'Grammar',
+          incorrectPart: e.incorrectPart || '',
+          correction: e.correction || '',
+          explanationVi: e.explanationVi || '',
+        })
       );
 
-      // Use first improved sentence for backward-compat fields
-      const firstImproved = improvedSentences[0];
+      const nativeAlternatives: NativeAlternative[] = (parsed.nativeAlternatives || []).map(
+        (s: { sentence: string; translation: string; explanation: string }) => ({
+          sentence: s.sentence || '',
+          translation: s.translation || '',
+          explanation: s.explanation || '',
+        })
+      );
+
+      // Legacy compat: map detectedErrors to flat errors array
+      const errors = detectedErrors.map((e) => ({
+        message: e.incorrectPart ? `"${e.incorrectPart}" → "${e.correction}"` : e.correction,
+        explanation: e.explanationVi,
+      }));
+
+      const firstAlt = nativeAlternatives[0];
 
       return {
         accuracy: Math.max(0, Math.min(100, parsed.accuracyScore)),
-        isGrammarCorrect: parsed.isGrammarCorrect ?? (parsed.errorsFound || []).length === 0,
+        isSpellingCorrect: parsed.isSpellingCorrect ?? true,
+        isGrammarCorrect: parsed.isGrammarCorrect ?? detectedErrors.length === 0,
         isNatural: parsed.isNatural ?? false,
-        errors: (parsed.errorsFound || []).map((msg: string) => ({
-          message: msg,
-          explanation: '',
-        })),
-        feedback: parsed.detailedFeedback || '',
-        improved: firstImproved?.en || '',
-        improvedTranslation: firstImproved?.vi || '',
-        improvedSentences,
-        grammarStructure: parsed.grammarBreakdown || '',
+        detectedErrors,
+        detailedAnalysisVi: parsed.detailedAnalysisVi || '',
+        nativeAlternatives,
+        grammarRulesBreakdown: parsed.grammarRulesBreakdown || '',
+        errors,
+        feedback: parsed.detailedAnalysisVi || '',
+        improved: firstAlt?.sentence || '',
+        improvedTranslation: firstAlt?.translation || '',
+        improvedSentences: nativeAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
+        grammarStructure: parsed.grammarRulesBreakdown || '',
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
