@@ -61,6 +61,73 @@ export function isGeminiConfigured(): boolean {
   return !!API_KEY;
 }
 
+function safeParseJSON(text: string): Record<string, unknown> {
+  let cleaned = text.trim();
+  // Strip ```json ... ``` or ``` ... ``` fences
+  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+  // Sometimes the fences are inline or multiple — extract the first { ... } block
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    cleaned = jsonMatch[0];
+  }
+  return JSON.parse(cleaned);
+}
+
+function buildFallbackAlternatives(targetWord: string, wordType: string, meaning: string): NativeAlternative[] {
+  const word = targetWord.replace(/\s*\([^)]*\)\s*/g, '').split(/\s*\/\s*/)[0].trim();
+  const lower = word.toLowerCase();
+
+  const alternatives: NativeAlternative[] = [];
+
+  if (wordType.toLowerCase().includes('verb')) {
+    alternatives.push({
+      sentence: `I ${lower} every day to improve myself.`,
+      translation: `Tôi ${meaning.toLowerCase()} mỗi ngày để phát triển bản thân.`,
+      explanation: 'Cấu trúc S + V + O dùng thì hiện tại đơn diễn tả thói quen.',
+    });
+    alternatives.push({
+      sentence: `She has ${lower}ed consistently to achieve her goals.`,
+      translation: `Cô ấy đã ${meaning.toLowerCase()} nhất quán để đạt được mục tiêu.`,
+      explanation: 'Dùng thì hiện tại hoàn thành (have + V-ed) để nhấn mạnh sự kiên trì.',
+    });
+  } else if (wordType.toLowerCase().includes('adj')) {
+    alternatives.push({
+      sentence: `The result was truly ${lower}, exceeding all expectations.`,
+      translation: `Kết quả thực sự ${meaning.toLowerCase()}, vượt mọi kỳ vọng.`,
+      explanation: 'Vị trí tính từ sau động từ "to be" làm bổ ngữ (complement).',
+    });
+    alternatives.push({
+      sentence: `He found the situation ${lower} and decided to act.`,
+      translation: `Anh ấy thấy tình huống ${meaning.toLowerCase()} và quyết định hành động.`,
+      explanation: 'Tính từ đứng sau tân ngữ để bổ nghĩa (find + O + Adj).',
+    });
+  } else if (wordType.toLowerCase().includes('noun') || wordType.toLowerCase().includes('n')) {
+    alternatives.push({
+      sentence: `Developing ${lower} is essential for long-term success.`,
+      translation: `Phát triển ${meaning.toLowerCase()} là điều kiện thiết yếu cho thành công dài hạn.`,
+      explanation: 'Danh từ làm tân ngữ cho động từ "developing".',
+    });
+    alternatives.push({
+      sentence: `Her ${lower} helped her overcome many challenges.`,
+      translation: `${meaning.charAt(0).toUpperCase() + meaning.slice(1).toLowerCase()} của cô ấy đã giúp cô ấy vượt qua nhiều thử thách.`,
+      explanation: 'Danh từ làm chủ ngữ cho câu, theo sau là động từ "helped".',
+    });
+  } else {
+    alternatives.push({
+      sentence: `Practicing ${lower} regularly will bring great results.`,
+      translation: `Thực hành ${meaning.toLowerCase()} thường xuyên sẽ mang lại kết quả tốt.`,
+      explanation: 'Cấu trúc V-ing làm chủ ngữ.',
+    });
+    alternatives.push({
+      sentence: `You should focus on ${lower} to achieve your goals.`,
+      translation: `Bạn nên tập trung vào ${meaning.toLowerCase()} để đạt được mục tiêu.`,
+      explanation: 'Dùng "focus on + N/V-ing" để diễn tả sự tập trung.',
+    });
+  }
+
+  return alternatives;
+}
+
 export async function evaluateWithGemini(params: {
   sentence: string;
   targetWord: string;
@@ -142,10 +209,11 @@ Rules:
       const text = response.text;
       if (!text) throw new Error('Empty Gemini response');
 
-      const parsed = JSON.parse(text);
+      const parsed = safeParseJSON(text);
 
-      const detectedErrors: DetectedError[] = (parsed.detectedErrors || []).map(
-        (e: { type: string; incorrectPart: string; correction: string; explanationVi: string }) => ({
+      const detectedErrorsRaw = (parsed.detectedErrors || []) as Array<{ type: string; incorrectPart: string; correction: string; explanationVi: string }>;
+      const detectedErrors: DetectedError[] = detectedErrorsRaw.map(
+        (e) => ({
           type: (e.type as ErrorType) || 'Grammar',
           incorrectPart: e.incorrectPart || '',
           correction: e.correction || '',
@@ -153,13 +221,19 @@ Rules:
         })
       );
 
-      const nativeAlternatives: NativeAlternative[] = (parsed.nativeAlternatives || []).map(
-        (s: { sentence: string; translation: string; explanation: string }) => ({
+      const nativeAlternativesRaw = (parsed.nativeAlternatives || []) as Array<{ sentence: string; translation: string; explanation: string }>;
+      const nativeAlternatives: NativeAlternative[] = nativeAlternativesRaw.map(
+        (s) => ({
           sentence: s.sentence || '',
           translation: s.translation || '',
           explanation: s.explanation || '',
         })
-      );
+      ).filter((s) => s.sentence.trim().length > 0);
+
+      // If Gemini returned no alternatives, generate proper fallbacks for the target word
+      const effectiveAlternatives = nativeAlternatives.length > 0
+        ? nativeAlternatives
+        : buildFallbackAlternatives(targetWord, wordType, meaning);
 
       // Legacy compat: map detectedErrors to flat errors array
       const errors = detectedErrors.map((e) => ({
@@ -167,23 +241,23 @@ Rules:
         explanation: e.explanationVi,
       }));
 
-      const firstAlt = nativeAlternatives[0];
+      const firstAlt = effectiveAlternatives[0];
 
       return {
-        accuracy: Math.max(0, Math.min(100, parsed.accuracyScore)),
-        isSpellingCorrect: parsed.isSpellingCorrect ?? true,
-        isGrammarCorrect: parsed.isGrammarCorrect ?? detectedErrors.length === 0,
-        isNatural: parsed.isNatural ?? false,
+        accuracy: Math.max(0, Math.min(100, parsed.accuracyScore as number)),
+        isSpellingCorrect: (parsed.isSpellingCorrect as boolean) ?? true,
+        isGrammarCorrect: (parsed.isGrammarCorrect as boolean) ?? detectedErrors.length === 0,
+        isNatural: (parsed.isNatural as boolean) ?? false,
         detectedErrors,
-        detailedAnalysisVi: parsed.detailedAnalysisVi || '',
-        nativeAlternatives,
-        grammarRulesBreakdown: parsed.grammarRulesBreakdown || '',
+        detailedAnalysisVi: (parsed.detailedAnalysisVi as string) || '',
+        nativeAlternatives: effectiveAlternatives,
+        grammarRulesBreakdown: (parsed.grammarRulesBreakdown as string) || '',
         errors,
-        feedback: parsed.detailedAnalysisVi || '',
+        feedback: (parsed.detailedAnalysisVi as string) || '',
         improved: firstAlt?.sentence || '',
         improvedTranslation: firstAlt?.translation || '',
-        improvedSentences: nativeAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
-        grammarStructure: parsed.grammarRulesBreakdown || '',
+        improvedSentences: effectiveAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
+        grammarStructure: (parsed.grammarRulesBreakdown as string) || '',
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

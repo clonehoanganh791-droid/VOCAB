@@ -552,70 +552,39 @@ function checkTenseConsistency(
 const BE_VERBS = new Set(['is', 'are', 'was', 'were', 'be', 'been', 'being', 'am']);
 const PRESENT_VERBS = new Set(['goes', 'does', 'makes', 'takes', 'gives', 'finds', 'tells', 'asks', 'uses', 'needs', 'wants', 'likes', 'loves', 'hates', 'eats', 'drinks', 'reads', 'writes', 'sees', 'hears', 'knows', 'thinks', 'believes', 'feels', 'overcomes', 'solves', 'builds', 'creates', 'develops', 'improves', 'manages', 'achieves', 'reaches', 'delivers', 'provides', 'requires', 'offers', 'accepts']);
 
-// Build the improved/model sentence
+// Build improved/model sentences specifically for the target word — never echo user's input
 function buildModelSentence(
-  sentence: string,
+  _sentence: string,
   targetWord: string,
   wordType: string,
   meaning: string,
   lang: 'en' | 'vi',
 ): { improved: string; translation: string; structure: string } {
-  let improved = sentence.trim();
+  void _sentence;
 
-  // Fix first letter capitalization
-  if (improved.length > 0) {
-    improved = improved[0].toUpperCase() + improved.slice(1);
+  const word = targetWord.replace(/\s*\([^)]*\)\s*/g, '').split(/\s*\/\s*/)[0].trim();
+  const lower = word.toLowerCase();
+
+  let improved: string;
+  let translation: string;
+
+  if (wordType.toLowerCase().includes('verb')) {
+    improved = `I ${lower} every day to improve myself.`;
+    translation = `Tôi ${meaning.toLowerCase()} mỗi ngày để phát triển bản thân.`;
+  } else if (wordType.toLowerCase().includes('adj')) {
+    improved = `The result was truly ${lower}, exceeding all expectations.`;
+    translation = `Kết quả thực sự ${meaning.toLowerCase()}, vượt mọi kỳ vọng.`;
+  } else if (wordType.toLowerCase().includes('noun') || wordType.toLowerCase().includes('n')) {
+    improved = `Developing ${lower} is essential for long-term success.`;
+    translation = `Phát triển ${meaning.toLowerCase()} là điều kiện thiết yếu cho thành công dài hạn.`;
+  } else {
+    improved = `Practicing ${lower} regularly will bring great results.`;
+    translation = `Thực hành ${meaning.toLowerCase()} thường xuyên sẽ mang lại kết quả tốt.`;
   }
 
-  // Fix lowercase "i" -> "I" (only actual lowercase, not already uppercase)
-  improved = improved.replace(/\bi\b/g, 'I');
-  improved = improved.replace(/\bi'm\b/gi, "I'm");
-  improved = improved.replace(/\bi'll\b/gi, "I'll");
-  improved = improved.replace(/\bi've\b/gi, "I've");
-  improved = improved.replace(/\bi'd\b/gi, "I'd");
-
-  // Fix contractions without apostrophes
-  improved = improved.replace(/\bdont\b/gi, "don't");
-  improved = improved.replace(/\bcant\b/gi, "can't");
-  improved = improved.replace(/\bwont\b/gi, "won't");
-  improved = improved.replace(/\bdidnt\b/gi, "didn't");
-  improved = improved.replace(/\bisnt\b/gi, "isn't");
-  improved = improved.replace(/\barent\b/gi, "aren't");
-
-  // Fix double spaces
-  improved = improved.replace(/\s{2,}/g, ' ');
-
-  // Add ending punctuation
-  if (improved.length > 0 && !/[.!?]$/.test(improved)) {
-    improved += '.';
-  }
-
-  // Build a simple Vietnamese translation hint
-  const translation = lang === 'vi'
-    ? `Câu mẫu: "${improved}" (Nghĩa: ${meaning})`
-    : `Model: "${improved}" (Meaning: ${meaning})`;
-
-  // Grammar structure breakdown
-  const structureParts: string[] = [];
-  const tokens = tokenize(improved);
-  if (tokens.length > 0) {
-    const first = tokens[0].lower;
-    if (first === 'i' || first === 'he' || first === 'she' || first === 'it' || first === 'they' || first === 'we' || first === 'you') {
-      structureParts.push(lang === 'vi' ? 'Chủ ngữ (Subject)' : 'Subject');
-    } else {
-      structureParts.push(lang === 'vi' ? 'Chủ ngữ (Subject)' : 'Subject');
-    }
-    structureParts.push(lang === 'vi' ? 'Động từ (Verb)' : 'Verb');
-    if (tokens.length > 2) {
-      structureParts.push(lang === 'vi' ? 'Bổ ngữ (Object/Complement)' : 'Object/Complement');
-    }
-  }
-
-  const structureLabel = lang === 'vi' ? 'Cấu trúc' : 'Structure';
-  const structure = `${structureLabel}: ${structureParts.join(' + ')}`;
-
-  // Use wordType in the structure description
-  void wordType;
+  const structure = lang === 'vi'
+    ? `Câu mẫu dùng "${word}" (${wordType}): ${improved}\nCấu trúc: Chủ ngữ (Subject) + Động từ chính (Main Verb) + Bổ ngữ (Object/Complement).`
+    : `Model sentence using "${word}" (${wordType}): ${improved}\nStructure: Subject + Main Verb + Object/Complement.`;
 
   return { improved, translation, structure };
 }
@@ -695,9 +664,6 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
 
   accuracy = Math.max(0, Math.min(100, accuracy));
 
-  // Build model sentence
-  const model = buildModelSentence(trimmed, targetWord, wordType, meaning, lang);
-
   // Build feedback text
   const displayWord = targetOptions.length > 1 ? targetOptions.join(' / ') : targetWord;
   let feedback: string;
@@ -717,6 +683,28 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
     explanationVi: e.explanation,
   }));
 
+  // Generate 2 proper fallback alternatives for the target word
+  const alt1 = buildModelSentence(trimmed, targetWord, wordType, meaning, lang);
+  const alt2Word = targetWord.replace(/\s*\([^)]*\)\s*/g, '').split(/\s*\/\s*/)[0].trim();
+  const alt2Lower = alt2Word.toLowerCase();
+  let alt2En: string;
+  let alt2Vi: string;
+  if (wordType.toLowerCase().includes('verb')) {
+    alt2En = `She has ${alt2Lower}ed consistently to achieve her goals.`;
+    alt2Vi = `Cô ấy đã ${meaning.toLowerCase()} nhất quán để đạt được mục tiêu.`;
+  } else if (wordType.toLowerCase().includes('adj')) {
+    alt2En = `He found the situation ${alt2Lower} and decided to act.`;
+    alt2Vi = `Anh ấy thấy tình huống ${meaning.toLowerCase()} và quyết định hành động.`;
+  } else {
+    alt2En = `Her ${alt2Lower} helped her overcome many challenges.`;
+    alt2Vi = `${meaning.charAt(0).toUpperCase() + meaning.slice(1).toLowerCase()} của cô ấy đã giúp cô ấy vượt qua nhiều thử thách.`;
+  }
+
+  const nativeAlternatives: NativeAlternative[] = [
+    { sentence: alt1.improved, translation: alt1.translation, explanation: '' },
+    { sentence: alt2En, translation: alt2Vi, explanation: '' },
+  ];
+
   return {
     accuracy,
     isSpellingCorrect: true,
@@ -724,13 +712,13 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
     isNatural: allErrors.length === 0,
     detectedErrors,
     detailedAnalysisVi: feedback,
-    nativeAlternatives: [{ sentence: model.improved, translation: model.translation, explanation: '' }],
-    grammarRulesBreakdown: model.structure,
+    nativeAlternatives,
+    grammarRulesBreakdown: alt1.structure,
     errors: allErrors,
     feedback,
-    improved: model.improved,
-    improvedTranslation: model.translation,
-    improvedSentences: [{ en: model.improved, vi: model.translation }],
-    grammarStructure: model.structure,
+    improved: alt1.improved,
+    improvedTranslation: alt1.translation,
+    improvedSentences: nativeAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
+    grammarStructure: alt1.structure,
   };
 }
