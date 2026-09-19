@@ -260,7 +260,7 @@ export function SentenceBuilding() {
           <>
             {/* Structured evaluation result */}
             <div className="mt-4 space-y-4 animate-fade-in">
-              {/* Accuracy bar */}
+              {/* Accuracy bar + badges */}
               <div className="flex items-center gap-3">
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-1">
@@ -278,6 +278,26 @@ export function SentenceBuilding() {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Grammar & Naturalness badges */}
+              <div className="flex flex-wrap gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold ${
+                  evaluation.isGrammarCorrect
+                    ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                    : 'bg-rose-100 text-rose-700 border border-rose-200'
+                }`}>
+                  {evaluation.isGrammarCorrect ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                  {evaluation.isGrammarCorrect ? t('grammarCorrect') : t('grammarIncorrect')}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold ${
+                  evaluation.isNatural
+                    ? 'bg-sky-100 text-sky-700 border border-sky-200'
+                    : 'bg-amber-100 text-amber-700 border border-amber-200'
+                }`}>
+                  <Sparkles className="w-4 h-4" />
+                  {t('naturalnessBadge')}: {evaluation.isNatural ? t('natural') : t('unnatural')}
+                </span>
               </div>
 
               {/* Errors Found */}
@@ -306,35 +326,58 @@ export function SentenceBuilding() {
               )}
 
               {/* Detailed Feedback */}
-              <div className="rounded-xl p-4 border border-amber-200 bg-amber-50">
-                <div className="flex items-start gap-2 mb-2">
-                  <Lightbulb className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm font-bold text-amber-700">{t('detailedFeedback')}</p>
-                </div>
-                <p className="text-sm text-slate-600 whitespace-pre-line ml-7">{evaluation.feedback}</p>
-              </div>
-
-              {/* Model Sentence */}
-              {evaluation.improved && (
-                <div className="rounded-xl p-4 border border-sky-200 bg-sky-50">
+              {evaluation.feedback && (
+                <div className="rounded-xl p-4 border border-amber-200 bg-amber-50">
                   <div className="flex items-start gap-2 mb-2">
-                    <Sparkles className="w-5 h-5 text-sky-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm font-bold text-sky-700">{t('modelSentence')}</p>
+                    <Lightbulb className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm font-bold text-amber-700">{t('detailedFeedback')}</p>
                   </div>
-                  <div className="ml-7 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm text-sky-700 font-medium">{evaluation.improved}</p>
-                      <button
-                        onClick={() => speak(evaluation.improved, rate)}
-                        className="w-7 h-7 rounded-full bg-sky-100 hover:bg-sky-200 text-sky-500 flex items-center justify-center transition-colors flex-shrink-0"
-                        title={t('playAudio')}
-                      >
-                        <Volume2 className="w-3.5 h-3.5" />
-                      </button>
+                  <div className="text-sm text-slate-600 whitespace-pre-line ml-7 leading-relaxed">
+                    {evaluation.feedback.split('\n').map((line, i) => {
+                      const trimmed = line.trim();
+                      if (trimmed.startsWith('•') || trimmed.startsWith('-')) {
+                        return <p key={i} className="ml-3 my-0.5">{trimmed}</p>;
+                      }
+                      if (trimmed.match(/^(Ngữ pháp|Collocation|Tone|Grammar|Collocation &|Tone &|Phong cách)/i)) {
+                        return <p key={i} className="font-semibold text-amber-800 mt-2 mb-0.5">{trimmed}</p>;
+                      }
+                      return <p key={i} className="my-0.5">{trimmed}</p>;
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Advanced Native Examples */}
+              {evaluation.improvedSentences.length > 0 && (
+                <div className="rounded-xl p-4 border border-sky-200 bg-sky-50">
+                  <div className="flex items-start gap-2 mb-1">
+                    <Sparkles className="w-5 h-5 text-sky-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-bold text-sky-700">{t('advancedExamples')}</p>
+                      <p className="text-xs text-sky-500 mt-0.5">{t('advancedExamplesDesc')}</p>
                     </div>
-                    {evaluation.improvedTranslation && (
-                      <p className="text-sm text-slate-500 italic">{evaluation.improvedTranslation}</p>
-                    )}
+                  </div>
+                  <div className="ml-7 mt-3 space-y-3">
+                    {evaluation.improvedSentences.map((s, idx) => (
+                      <div key={idx} className="rounded-lg bg-white border border-sky-100 p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <p className="text-sm text-sky-700 font-medium flex-1">{s.en}</p>
+                          <button
+                            onClick={() => speak(s.en, rate)}
+                            className="w-7 h-7 rounded-full bg-sky-100 hover:bg-sky-200 text-sky-500 flex items-center justify-center transition-colors flex-shrink-0"
+                            title={t('playAudio')}
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {s.vi && (
+                          <p className="text-sm text-slate-500 italic mt-1.5 ml-8">{s.vi}</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -346,7 +389,7 @@ export function SentenceBuilding() {
                     <BookOpen className="w-5 h-5 text-indigo-500 flex-shrink-0 mt-0.5" />
                     <p className="text-sm font-bold text-indigo-700">{t('grammarStructure')}</p>
                   </div>
-                  <p className="text-sm text-slate-600 ml-7">{evaluation.grammarStructure}</p>
+                  <p className="text-sm text-slate-600 ml-7 whitespace-pre-line">{evaluation.grammarStructure}</p>
                 </div>
               )}
             </div>

@@ -157,6 +157,13 @@ export const translations = {
     grammarStructure: 'Grammar Structure',
     noErrorsFound: 'No grammar errors found. Well done!',
     modelSentence: 'Model Sentence',
+    naturalnessBadge: 'Native Naturalness',
+    natural: 'Natural',
+    unnatural: 'Unnatural',
+    grammarCorrect: 'Grammar OK',
+    grammarIncorrect: 'Grammar Issues',
+    advancedExamples: 'Advanced Native Examples',
+    advancedExamplesDesc: 'Natural alternative sentences using this word',
 
     // Analytics
     analyticsTitle: 'Skill Analytics',
@@ -376,6 +383,13 @@ export const translations = {
     grammarStructure: 'Cấu trúc ngữ pháp',
     noErrorsFound: 'Không phát hiện lỗi ngữ pháp. Làm tốt!',
     modelSentence: 'Câu gợi ý chuẩn',
+    naturalnessBadge: 'Độ tự nhiên bản ngữ',
+    natural: 'Tự nhiên',
+    unnatural: 'Không tự nhiên',
+    grammarCorrect: 'Ngữ pháp đúng',
+    grammarIncorrect: 'Lỗi ngữ pháp',
+    advancedExamples: 'Gợi ý nâng cao & Ví dụ chuẩn bản ngữ',
+    advancedExamplesDesc: 'Các câu thay thế tự nhiên sử dụng từ này',
 
     // Analytics
     analyticsTitle: 'Phân tích kỹ năng',

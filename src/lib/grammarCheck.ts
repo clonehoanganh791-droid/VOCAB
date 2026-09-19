@@ -6,12 +6,20 @@ export interface GrammarError {
   explanation: string;
 }
 
+export interface ImprovedSentence {
+  en: string;
+  vi: string;
+}
+
 export interface GrammarEvaluation {
   accuracy: number;
+  isGrammarCorrect: boolean;
+  isNatural: boolean;
   errors: GrammarError[];
   feedback: string;
   improved: string;
   improvedTranslation: string;
+  improvedSentences: ImprovedSentence[];
   grammarStructure: string;
 }
 
@@ -602,10 +610,13 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
   if (!trimmed) {
     return {
       accuracy: 0,
+      isGrammarCorrect: false,
+      isNatural: false,
       errors: [],
       feedback: lang === 'en' ? 'Please write a sentence.' : 'Vui lòng viết một câu.',
       improved: '',
       improvedTranslation: '',
+      improvedSentences: [],
       grammarStructure: '',
     };
   }
@@ -680,10 +691,13 @@ export function evaluateSentence({ sentence, targetWord, wordType, meaning, lang
 
   return {
     accuracy,
+    isGrammarCorrect: allErrors.length === 0,
+    isNatural: allErrors.length === 0,
     errors: allErrors,
     feedback,
     improved: model.improved,
     improvedTranslation: model.translation,
+    improvedSentences: [{ en: model.improved, vi: model.translation }],
     grammarStructure: model.structure,
   };
 }
