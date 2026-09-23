@@ -19,47 +19,38 @@ function shuffle<T>(arr: T[]): T[] {
   return copy;
 }
 
-// Generate contextual hint based on word length
-function buildHint(word: string, revealExtra: boolean): string {
-  const len = word.length;
+const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
+
+// Compute the initial set of revealed indices for a word
+function initialRevealedIndices(word: string): Set<number> {
   const chars = word.split('');
+  const len = chars.length;
+  const indices = new Set<number>();
 
   if (len <= 4) {
-    // Short: show 1st letter
-    return chars.map((c, i) => i === 0 ? c : '_').join(' ');
+    indices.add(0);
+  return indices;
   }
+
+  // Always reveal first and last letter
+  indices.add(0);
+  indices.add(len - 1);
 
   if (len <= 8) {
-    // Medium: show 1st and last letter, plus middle if extra
-    const indices = new Set([0, len - 1]);
-    if (revealExtra) {
-      indices.add(Math.floor(len / 2));
-    }
-    return chars.map((c, i) => indices.has(i) ? c : '_').join(' ');
+    // Medium: also reveal the middle letter
+    indices.add(Math.floor(len / 2));
+    return indices;
   }
 
-  // Long (9+): show 1st letter, key vowels, and last letter
-  const vowels = new Set(['a', 'e', 'i', 'o', 'u']);
-  const indices = new Set([0, len - 1]);
-  // Add first vowel after position 1
+  // Long (9+): reveal first vowel after position 0
   for (let i = 1; i < len - 1; i++) {
-    if (vowels.has(chars[i].toLowerCase())) {
+    if (VOWELS.has(chars[i].toLowerCase())) {
       indices.add(i);
       break;
     }
   }
-  if (revealExtra) {
-    // Reveal more vowels
-    let count = 0;
-    for (let i = 1; i < len - 1; i++) {
-      if (vowels.has(chars[i].toLowerCase()) && !indices.has(i)) {
-        indices.add(i);
-        count++;
-        if (count >= 2) break;
-      }
-    }
-  }
-  return chars.map((c, i) => indices.has(i) ? c : '_').join(' ');
+
+  return indices;
 }
 
 export function TypingTest() {
@@ -75,7 +66,8 @@ export function TypingTest() {
   const [result, setResult] = useState<'correct' | 'incorrect' | null>(null);
   const [score, setScore] = useState(0);
   const [showHint, setShowHint] = useState(false);
-  const [extraHint, setExtraHint] = useState(false);
+  const [revealedIndices, setRevealedIndices] = useState<Set<number>>(new Set());
+  const [hintPenaltyApplied, setHintPenaltyApplied] = useState(false);
   const [rate, setRate] = useState(getGlobalRate());
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -97,7 +89,8 @@ export function TypingTest() {
     setResult(null);
     setScore(0);
     setShowHint(false);
-    setExtraHint(false);
+    setRevealedIndices(new Set());
+    setHintPenaltyApplied(false);
     setPhase('playing');
   };
 
@@ -107,8 +100,7 @@ export function TypingTest() {
     let finalScore = score;
     if (correct) {
       finalScore = score + 1;
-      // Penalty for using extra hints
-      if (extraHint) finalScore = Math.max(0, finalScore - 0.5);
+      if (hintPenaltyApplied) finalScore = Math.max(0, finalScore - 0.5);
       setScore(finalScore);
     } else {
       incrementError(questions[current].word);
@@ -123,6 +115,32 @@ export function TypingTest() {
     });
   };
 
+  const toggleHint = () => {
+    if (!showHint) {
+      // First time showing hint: initialize revealed indices
+      setRevealedIndices(initialRevealedIndices(questions[current].word));
+    }
+    setShowHint(!showHint);
+  };
+
+  const revealMore = () => {
+    const word = questions[current].word;
+    const chars = word.split('');
+    // Find all unrevealed indices (excluding spaces and hyphens which are always visible)
+    const unrevealed: number[] = [];
+    for (let i = 0; i < chars.length; i++) {
+      if (!revealedIndices.has(i) && chars[i] !== ' ' && chars[i] !== '-') {
+        unrevealed.push(i);
+      }
+    }
+    if (unrevealed.length === 0) return;
+    const randomIndex = unrevealed[Math.floor(Math.random() * unrevealed.length)];
+    const next = new Set(revealedIndices);
+    next.add(randomIndex);
+    setRevealedIndices(next);
+    setHintPenaltyApplied(true);
+  };
+
   const nextQuestion = () => {
     if (current + 1 >= questions.length) {
       setPhase('done');
@@ -131,7 +149,8 @@ export function TypingTest() {
       setInput('');
       setResult(null);
       setShowHint(false);
-      setExtraHint(false);
+      setRevealedIndices(new Set());
+      setHintPenaltyApplied(false);
     }
   };
 
@@ -214,7 +233,12 @@ export function TypingTest() {
   // Playing
   const q = questions[current];
   const progress = ((current + 1) / questions.length) * 100;
-  const hintStr = buildHint(q.word, extraHint);
+  const wordChars = q.word.split('');
+
+  // Check if all non-space/hyphen characters are revealed
+  const hasUnrevealed = wordChars.some(
+    (ch, i) => !revealedIndices.has(i) && ch !== ' ' && ch !== '-'
+  );
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -277,15 +301,15 @@ export function TypingTest() {
         <div className="flex flex-col items-center gap-2 mb-4">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowHint(!showHint)}
+              onClick={toggleHint}
               className="flex items-center gap-1.5 text-sm font-semibold text-amber-600 hover:text-amber-700 transition-colors"
             >
               <Lightbulb className="w-4 h-4" />
               {t('hint')}
             </button>
-            {showHint && !extraHint && result === null && (
+            {showHint && hasUnrevealed && result === null && (
               <button
-                onClick={() => setExtraHint(true)}
+                onClick={revealMore}
                 className="flex items-center gap-1 text-xs font-semibold text-amber-500 hover:text-amber-600 bg-amber-50 px-2 py-1 rounded-full transition-colors"
               >
                 {t('showMoreHints')}
@@ -295,8 +319,24 @@ export function TypingTest() {
           </div>
           {showHint && (
             <div className="text-center">
-              <p className="text-sm text-slate-500 mb-1">{q.word.length} {t('letters')}</p>
-              <p className="text-lg font-mono font-bold text-slate-700 tracking-wider">{hintStr}</p>
+              <p className="text-sm text-slate-500 mb-2">{q.word.length} {t('letters')}</p>
+              <div className="flex flex-row gap-2 justify-center font-mono text-xl tracking-widest">
+                {wordChars.map((ch, i) => {
+                  const isRevealed = revealedIndices.has(i) || ch === ' ' || ch === '-';
+                  return (
+                    <span
+                      key={i}
+                      className={`inline-block w-6 text-center ${
+                        isRevealed
+                          ? 'text-slate-700 font-bold'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      {isRevealed ? ch : '_'}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
