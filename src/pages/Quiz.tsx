@@ -62,6 +62,7 @@ export function Quiz() {
     const correct = index === questions[current].correctIndex;
     if (correct) {
       setScore((s) => s + 1);
+      speak(questions[current].vocab.word, rate);
     } else {
       incrementError(questions[current].vocab.word);
     }
