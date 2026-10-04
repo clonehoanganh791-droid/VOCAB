@@ -99,6 +99,10 @@ export const translations = {
     aiBatchAuditApplyAll: 'Apply all corrections',
     aiBatchAuditApplied: (n: number) => `${n} words updated successfully`,
     aiBatchAuditProgress: (n: number, total: number) => `Scanning ${n}/${total}...`,
+    aiAutoNormalizing: 'AI is auto-normalizing & saving...',
+    aiAutoCorrected: (from: string, to: string) => `Auto-corrected: ${from} ➔ ${to}`,
+    aiBatchNormalized: (total: number, corrected: number) => `Added ${total} words (${corrected} auto-corrected)`,
+    aiBatchAuditAutoApplied: (n: number) => `Auto-fixed ${n} words`,
 
     // Vocab Chest
     searchWords: 'Search words...',
@@ -356,6 +360,10 @@ export const translations = {
     aiBatchAuditApplyAll: 'Cập nhật tất cả',
     aiBatchAuditApplied: (n: number) => `Đã cập nhật ${n} từ thành công`,
     aiBatchAuditProgress: (n: number, total: number) => `Đang quét ${n}/${total}...`,
+    aiAutoNormalizing: 'AI đang tự động chuẩn hóa & lưu từ...',
+    aiAutoCorrected: (from: string, to: string) => `Đã tự động sửa: ${from} ➔ ${to}`,
+    aiBatchNormalized: (total: number, corrected: number) => `Đã thêm ${total} từ (Đã tự động chuẩn hóa ${corrected} từ có lỗi chính tả/nghĩa)`,
+    aiBatchAuditAutoApplied: (n: number) => `Đã tự động sửa ${n} từ`,
 
     // Vocab Chest
     searchWords: 'Tìm từ...',

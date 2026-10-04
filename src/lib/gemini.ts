@@ -453,3 +453,120 @@ export async function batchAuditVocabWithGemini(
     totalErrors: items.length,
   };
 }
+
+// ===== Auto-Normalization (silent, batch single-call) =====
+
+export interface NormalizedVocabEntry {
+  originalWord: string;
+  word: string;
+  meaning: string;
+  partOfSpeech: string;
+  ipa: string;
+  wasAutoCorrected: boolean;
+  correctionNote: string;
+}
+
+const batchNormalizeSchema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      originalWord: { type: Type.STRING },
+      word: { type: Type.STRING },
+      meaning: { type: Type.STRING },
+      partOfSpeech: { type: Type.STRING },
+      ipa: { type: Type.STRING },
+      wasAutoCorrected: { type: Type.BOOLEAN },
+      correctionNote: { type: Type.STRING },
+    },
+    required: ['originalWord', 'word', 'meaning', 'partOfSpeech', 'ipa', 'wasAutoCorrected', 'correctionNote'],
+  },
+};
+
+export async function autoNormalizeVocabBatch(
+  entries: Array<{ word: string; meaning: string; type?: string }>,
+): Promise<NormalizedVocabEntry[]> {
+  if (entries.length === 0) return [];
+
+  const entriesText = entries
+    .map((e, i) => `${i + 1}. English: "${e.word}", Vietnamese: "${e.meaning}", Part of speech: "${e.type || ''}"`)
+    .join('\n');
+
+  const prompt = `You are an automated dictionary cleaner. For each input entry below, silently fix typos in both English and Vietnamese, correct mismatches, and standardize the entry.
+
+Input entries:
+${entriesText}
+
+Return a raw JSON array matching this exact schema:
+[
+  {
+    "originalWord": "raw user input",
+    "word": "Corrected English word (e.g., 'protectt' -> 'protect')",
+    "meaning": "Accurate, natural Vietnamese translation",
+    "partOfSpeech": "n | v | adj | adv | phr",
+    "ipa": "Standard IPA phonetic transcription",
+    "wasAutoCorrected": boolean,
+    "correctionNote": "Short explanation if changed (e.g. 'Sửa lỗi chính tả tiếng Anh: protectt ➔ protect'), empty string if no correction needed"
+  }
+]
+
+Rules:
+- Return exactly ${entries.length} entries, one for each input, in the same order.
+- If an entry is already correct, set wasAutoCorrected to false and still fill all fields with the correct values.
+- Always provide IPA transcription.
+- Keep correctionNote in Vietnamese, concise. Empty string if no correction.`;
+
+  for (const model of MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+          responseSchema: batchNormalizeSchema,
+        },
+      });
+
+      const text = response.text;
+      if (!text) throw new Error('Empty Gemini response');
+
+      const parsed = JSON.parse(text) as NormalizedVocabEntry[];
+
+      // Ensure we have the right number of entries, pad with originals if needed
+      const result: NormalizedVocabEntry[] = entries.map((entry, i) => {
+        const item = parsed[i];
+        if (!item) {
+          return {
+            originalWord: entry.word,
+            word: entry.word,
+            meaning: entry.meaning,
+            partOfSpeech: entry.type || '',
+            ipa: '',
+            wasAutoCorrected: false,
+            correctionNote: '',
+          };
+        }
+        return {
+          originalWord: entry.word,
+          word: item.word || entry.word,
+          meaning: item.meaning || entry.meaning,
+          partOfSpeech: item.partOfSpeech || entry.type || '',
+          ipa: item.ipa || '',
+          wasAutoCorrected: item.wasAutoCorrected ?? false,
+          correctionNote: item.correctionNote || '',
+        };
+      });
+
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error('All Gemini models failed for batch normalization');
+}

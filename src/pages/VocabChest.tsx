@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
-import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Sparkles, Loader2, AlertTriangle } from 'lucide-react';
+import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Sparkles, Loader2 } from 'lucide-react';
 import { useVocab } from '@/context/VocabContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { useToast } from '@/components/Toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AudioControl } from '@/components/AudioControl';
 import { DEFAULT_CHESTS, FALLBACK_CHEST_KEY } from '@/lib/categorizer';
-import { batchAuditVocabWithGemini, type BatchAuditItem } from '@/lib/gemini';
+import { batchAuditVocabWithGemini } from '@/lib/gemini';
 import type { Vocabulary } from '@/lib/types';
 
 export function VocabChest() {
@@ -26,7 +26,6 @@ export function VocabChest() {
   // Batch audit state
   const [auditing, setAuditing] = useState(false);
   const [auditProgress, setAuditProgress] = useState<{ scanned: number; total: number } | null>(null);
-  const [auditResults, setAuditResults] = useState<BatchAuditItem[]>([]);
 
   // Build chest groups with counts
   const chestGroups = useMemo(() => {
@@ -118,36 +117,33 @@ export function VocabChest() {
   const handleBatchAudit = async () => {
     setAuditing(true);
     setAuditProgress({ scanned: 0, total: vocabs.length });
-    setAuditResults([]);
 
     try {
       const result = await batchAuditVocabWithGemini(
         vocabs.map((v) => ({ id: v.id, word: v.word, meaning: v.meaning, type: v.type })),
         (scanned, total) => setAuditProgress({ scanned, total }),
       );
-      setAuditResults(result.items);
+
       if (result.items.length === 0) {
         show(t('aiBatchAuditNone'), 'success');
+      } else {
+        // Auto-apply all corrections immediately
+        let count = 0;
+        for (const item of result.items) {
+          const { error } = await updateVocab(item.vocabId, {
+            word: item.corrected.word,
+            type: item.corrected.partOfSpeech,
+            meaning: item.corrected.meaning,
+          });
+          if (!error) count++;
+        }
+        show(tFn('aiBatchAuditAutoApplied', count), 'success');
       }
     } catch {
       show(t('aiValidationFailed'), 'error');
     }
     setAuditing(false);
     setAuditProgress(null);
-  };
-
-  const handleApplyAllCorrections = async () => {
-    let count = 0;
-    for (const item of auditResults) {
-      const { error } = await updateVocab(item.vocabId, {
-        word: item.corrected.word,
-        type: item.corrected.partOfSpeech,
-        meaning: item.corrected.meaning,
-      });
-      if (!error) count++;
-    }
-    setAuditResults([]);
-    show(tFn('aiBatchAuditApplied', count), 'success');
   };
 
   // Chest display name
@@ -430,78 +426,6 @@ export function VocabChest() {
           onSave={handleSaveEdit}
           onClose={() => setEditTarget(null)}
         />
-      )}
-
-      {/* Batch audit modal */}
-      {auditResults.length > 0 && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 animate-scale-in max-h-[85vh] overflow-y-auto">
-            <div className="flex items-start gap-4 mb-5">
-              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                <Sparkles className="w-6 h-6 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-slate-800">{t('aiBatchAuditTitle')}</h3>
-                <p className="text-sm text-slate-500 mt-1">{t('aiBatchAuditDesc')}</p>
-              </div>
-              <button
-                onClick={() => setAuditResults([])}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 mb-5">
-              {auditResults.map((item, i) => (
-                <div key={i} className="rounded-xl border border-slate-200 p-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-rose-50 border border-rose-200 p-3">
-                      <p className="text-xs font-bold text-rose-500 uppercase mb-2">{t('aiValidationYourInput')}</p>
-                      <p className="text-sm font-semibold text-rose-700 line-through">{item.original.word}</p>
-                      <p className="text-xs text-rose-400 mt-1">{item.original.type || '—'}</p>
-                      <p className="text-sm text-rose-600 mt-1">{item.original.meaning}</p>
-                    </div>
-                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
-                      <p className="text-xs font-bold text-emerald-500 uppercase mb-2">{t('aiValidationSuggestion')}</p>
-                      <p className="text-sm font-semibold text-emerald-700">{item.corrected.word}</p>
-                      {item.corrected.ipa && (
-                        <p className="text-xs font-mono text-emerald-500 mt-0.5">{item.corrected.ipa}</p>
-                      )}
-                      <p className="text-xs text-emerald-400 mt-1">{item.corrected.partOfSpeech}</p>
-                      <p className="text-sm text-emerald-600 mt-1">{item.corrected.meaning}</p>
-                    </div>
-                  </div>
-                  {item.notes.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {item.notes.map((note, ni) => (
-                        <span key={ni} className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                          {note}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setAuditResults([])}
-                className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
-              >
-                {t('cancel')}
-              </button>
-              <button
-                onClick={handleApplyAllCorrections}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 transition-all shadow-sm"
-              >
-                <Check className="w-4 h-4" />
-                {t('aiBatchAuditApplyAll')} ({auditResults.length})
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       <ConfirmDialog

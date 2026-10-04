@@ -1,19 +1,19 @@
 import { useState, useRef, useMemo } from 'react';
-import { Plus, Upload, FileText, Trash2, Check, FileUp, Loader2, Sparkles, Volume2, AlertTriangle, X } from 'lucide-react';
+import { Plus, Upload, FileText, Trash2, Check, FileUp, Loader2, Sparkles, Volume2 } from 'lucide-react';
 import { useVocab } from '@/context/VocabContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { useToast } from '@/components/Toast';
 import { parseFile, parseVocabText } from '@/lib/fileParser';
 import { autoCategorize, getChestName, DEFAULT_CHESTS, FALLBACK_CHEST_KEY } from '@/lib/categorizer';
 import { speak } from '@/lib/speech';
-import { validateVocabWithGemini, type VocabValidationResult } from '@/lib/gemini';
+import { autoNormalizeVocabBatch } from '@/lib/gemini';
 import type { ParsedVocab } from '@/lib/types';
 
 const AUTO_KEY = '__auto__';
 
 export function AddVocabulary() {
   const { addVocab, addManyVocabs, existingWords, vocabs } = useVocab();
-  const { t, tFn, lang } = useLanguage();
+  const { t, tFn, tFn2, tFnStr, lang } = useLanguage();
   const { show } = useToast();
 
   const [mode, setMode] = useState<'quick' | 'bulk'>('quick');
@@ -35,9 +35,8 @@ export function AddVocabulary() {
   const [fileName, setFileName] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // AI validation state
-  const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState<VocabValidationResult | null>(null);
+  // AI auto-normalization state
+  const [normalizing, setNormalizing] = useState(false);
 
   // Existing custom categories from user's vocabs
   const existingCategories = useMemo(() => {
@@ -53,7 +52,6 @@ export function AddVocabulary() {
       name: lang === 'vi' ? c.nameVi : c.nameEn,
     }));
     defaults.push({ key: FALLBACK_CHEST_KEY, name: lang === 'vi' ? 'Chung' : 'General' });
-    // Add existing custom categories not in defaults
     for (const cat of existingCategories) {
       const isDefault = defaults.some((d) => d.key === cat || d.name === cat);
       if (!isDefault) {
@@ -69,25 +67,12 @@ export function AddVocabulary() {
     return choice;
   };
 
-  const saveWord = async (wordToSave: string, typeToSave: string, meaningToSave: string) => {
-    const finalCategory = resolveChest(chestChoice, customChest, wordToSave, meaningToSave);
-    const { error } = await addVocab({
-      word: wordToSave,
-      type: typeToSave,
-      meaning: meaningToSave,
-      category: finalCategory,
-    });
-    if (error) {
-      show(t('toastError'), 'error');
-    } else {
-      const chestName = getChestName(finalCategory, lang);
-      show(`${t('addSuccess')} — ${t('autoCategorized')} ${chestName}`, 'success');
-      setWord('');
-      setType('');
-      setMeaning('');
-      setChestChoice(AUTO_KEY);
-      setCustomChest('');
-    }
+  const resetForm = () => {
+    setWord('');
+    setType('');
+    setMeaning('');
+    setChestChoice(AUTO_KEY);
+    setCustomChest('');
   };
 
   const handleQuickAdd = async (e: React.FormEvent) => {
@@ -101,39 +86,60 @@ export function AddVocabulary() {
       return;
     }
 
-    setValidating(true);
+    setNormalizing(true);
     try {
-      const result = await validateVocabWithGemini({
-        word: word.trim(),
-        meaning: meaning.trim(),
-        type: type.trim(),
+      const normalized = await autoNormalizeVocabBatch([
+        { word: word.trim(), meaning: meaning.trim(), type: type.trim() },
+      ]);
+      const entry = normalized[0];
+      const finalWord = entry.word;
+      const finalType = entry.partOfSpeech;
+      const finalMeaning = entry.meaning;
+
+      // Check for duplicate after correction
+      if (existingWords.has(finalWord.toLowerCase())) {
+        show(t('wordExists'), 'error');
+        setNormalizing(false);
+        return;
+      }
+
+      const finalCategory = resolveChest(chestChoice, customChest, finalWord, finalMeaning);
+      const { error } = await addVocab({
+        word: finalWord,
+        type: finalType,
+        meaning: finalMeaning,
+        category: finalCategory,
       });
-      if (!result.hasErrors) {
-        // Word is accurate — save immediately
-        await saveWord(word.trim(), type.trim(), meaning.trim());
-        show(t('aiValidationPerfect'), 'success');
+
+      if (error) {
+        show(t('toastError'), 'error');
       } else {
-        // Has errors — show correction modal (DO NOT SAVE)
-        setValidationResult(result);
+        if (entry.wasAutoCorrected && entry.originalWord.toLowerCase() !== finalWord.toLowerCase()) {
+          show(tFnStr('aiAutoCorrected', entry.originalWord, finalWord), 'success');
+        } else {
+          const chestName = getChestName(finalCategory, lang);
+          show(`${t('addSuccess')} — ${t('autoCategorized')} ${chestName}`, 'success');
+        }
+        resetForm();
       }
     } catch {
-      // API failure: show warning, do NOT save invalid data
-      show(t('aiValidationFailed'), 'error');
+      // Fallback: save original input on API failure
+      const finalCategory = resolveChest(chestChoice, customChest, word.trim(), meaning.trim());
+      const { error } = await addVocab({
+        word: word.trim(),
+        type: type.trim(),
+        meaning: meaning.trim(),
+        category: finalCategory,
+      });
+      if (error) {
+        show(t('toastError'), 'error');
+      } else {
+        const chestName = getChestName(finalCategory, lang);
+        show(`${t('addSuccess')} — ${t('autoCategorized')} ${chestName}`, 'success');
+        resetForm();
+      }
     }
-    setValidating(false);
-  };
-
-  const handleApplyCorrections = async () => {
-    if (!validationResult) return;
-    const { corrected } = validationResult;
-    setValidating(false);
-    setValidationResult(null);
-    await saveWord(corrected.word, corrected.partOfSpeech, corrected.meaning);
-  };
-
-  const handleCancelValidation = () => {
-    setValidationResult(null);
-    setValidating(false);
+    setNormalizing(false);
   };
 
   const handleParseText = () => {
@@ -141,7 +147,6 @@ export function AddVocabulary() {
     setParsing(true);
     const baseCat = bulkCustomChest.trim() || (bulkChestChoice === AUTO_KEY ? '' : bulkChestChoice);
     const result = parseVocabText(bulkText, baseCat || 'General');
-    // Auto-categorize each parsed word if in auto mode
     if (bulkChestChoice === AUTO_KEY && !bulkCustomChest.trim()) {
       const autoResult = result.map((v) => ({
         ...v,
@@ -190,16 +195,61 @@ export function AddVocabulary() {
   const handleSaveSelected = async () => {
     const selected = parsed.filter((_, i) => selectedIndices.has(i));
     if (selected.length === 0) return;
-    const { error, count } = await addManyVocabs(selected);
-    if (error) {
-      show(t('toastError'), 'error');
-    } else {
-      show(tFn('toastImported', count), 'success');
-      setParsed([]);
-      setSelectedIndices(new Set());
-      setBulkText('');
-      setFileName('');
+
+    setNormalizing(true);
+    try {
+      const normalized = await autoNormalizeVocabBatch(
+        selected.map((v) => ({ word: v.word, meaning: v.meaning, type: v.type })),
+      );
+
+      // Build cleaned vocabs, preserving categories
+      const cleanedVocabs: ParsedVocab[] = selected.map((v, i) => {
+        const norm = normalized[i];
+        return {
+          word: norm?.word || v.word,
+          type: norm?.partOfSpeech || v.type,
+          meaning: norm?.meaning || v.meaning,
+          category: v.category,
+        };
+      });
+
+      // Filter out duplicates
+      const existingLower = new Set(vocabs.map((v) => v.word.toLowerCase()));
+      const unique = cleanedVocabs.filter((v) => !existingLower.has(v.word.toLowerCase()));
+
+      if (unique.length === 0) {
+        show(t('wordExists'), 'error');
+        setNormalizing(false);
+        return;
+      }
+
+      const { error, count } = await addManyVocabs(unique);
+      if (error) {
+        show(t('toastError'), 'error');
+      } else {
+        const correctedCount = normalized.filter(
+          (n) => n.wasAutoCorrected,
+        ).length;
+        show(tFn2('aiBatchNormalized', count, correctedCount), 'success');
+        setParsed([]);
+        setSelectedIndices(new Set());
+        setBulkText('');
+        setFileName('');
+      }
+    } catch {
+      // Fallback: save original selected vocabs
+      const { error, count } = await addManyVocabs(selected);
+      if (error) {
+        show(t('toastError'), 'error');
+      } else {
+        show(tFn('toastImported', count), 'success');
+        setParsed([]);
+        setSelectedIndices(new Set());
+        setBulkText('');
+        setFileName('');
+      }
     }
+    setNormalizing(false);
   };
 
   const toggleSelect = (i: number) => {
@@ -231,7 +281,6 @@ export function AddVocabulary() {
     });
   };
 
-  // Update a single parsed item's category
   const updateParsedCategory = (i: number, newCat: string) => {
     setParsed((prev) => prev.map((v, idx) => idx === i ? { ...v, category: newCat } : v));
   };
@@ -326,13 +375,13 @@ export function AddVocabulary() {
             )}
             <button
               type="submit"
-              disabled={validating}
+              disabled={normalizing}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-teal-500 text-white font-semibold hover:from-sky-600 hover:to-teal-600 transition-all shadow-sm disabled:opacity-70"
             >
-              {validating ? (
+              {normalizing ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  {t('aiValidating')}
+                  {t('aiAutoNormalizing')}
                 </>
               ) : (
                 <>
@@ -342,106 +391,6 @@ export function AddVocabulary() {
               )}
             </button>
           </form>
-        </div>
-      )}
-
-      {/* AI Validation Modal */}
-      {validationResult && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 animate-scale-in max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start gap-4 mb-5">
-              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                <Sparkles className="w-6 h-6 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-slate-800">{t('aiValidationTitle')}</h3>
-              </div>
-              <button
-                onClick={handleCancelValidation}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Side-by-side diff */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              {/* Original input */}
-              <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4">
-                <p className="text-xs font-bold text-rose-600 uppercase tracking-wide mb-3">{t('aiValidationYourInput')}</p>
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-xs text-rose-400">{t('word')}</p>
-                    <p className="text-sm font-semibold text-rose-700 line-through">{validationResult.original.word}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-rose-400">{t('meaning')}</p>
-                    <p className="text-sm font-semibold text-rose-700 line-through">{validationResult.original.meaning}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* AI suggestion */}
-              <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4">
-                <p className="text-xs font-bold text-emerald-600 uppercase tracking-wide mb-3">{t('aiValidationSuggestion')}</p>
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-xs text-emerald-400">{t('word')}</p>
-                    <p className="text-sm font-semibold text-emerald-700">{validationResult.corrected.word}</p>
-                  </div>
-                  {validationResult.corrected.ipa && (
-                    <div>
-                      <p className="text-xs text-emerald-400">{t('aiValidationIPA')}</p>
-                      <p className="text-sm font-mono text-emerald-700">{validationResult.corrected.ipa}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-xs text-emerald-400">{t('aiValidationPartOfSpeech')}</p>
-                    <p className="text-sm font-semibold text-emerald-700">{validationResult.corrected.partOfSpeech}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-emerald-400">{t('meaning')}</p>
-                    <p className="text-sm font-semibold text-emerald-700">{validationResult.corrected.meaning}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Notes */}
-            {validationResult.notes.length > 0 && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 mb-5">
-                <div className="flex items-start gap-2 mb-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm font-bold text-amber-700">{t('aiValidationNotes')}</p>
-                </div>
-                <ul className="space-y-1.5 ml-6">
-                  {validationResult.notes.map((note, i) => (
-                    <li key={i} className="text-sm text-amber-600 flex items-start gap-1.5">
-                      <span className="text-amber-400 mt-0.5">•</span>
-                      {note}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={handleApplyCorrections}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 transition-all shadow-sm"
-              >
-                <Check className="w-4 h-4" />
-                {t('aiValidationApply')}
-              </button>
-              <button
-                onClick={handleCancelValidation}
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors"
-              >
-                {t('aiValidationCancel')}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -559,10 +508,11 @@ export function AddVocabulary() {
                   </label>
                   <button
                     onClick={handleSaveSelected}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-teal-500 text-white font-semibold hover:from-sky-600 hover:to-teal-600 transition-all shadow-sm"
+                    disabled={normalizing}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-teal-500 text-white font-semibold hover:from-sky-600 hover:to-teal-600 transition-all shadow-sm disabled:opacity-50"
                   >
-                    <Check className="w-4 h-4" />
-                    {t('saveSelected')} ({selectedIndices.size})
+                    {normalizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {normalizing ? t('aiAutoNormalizing') : `${t('saveSelected')} (${selectedIndices.size})`}
                   </button>
                 </div>
               </div>
