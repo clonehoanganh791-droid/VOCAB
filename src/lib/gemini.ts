@@ -393,3 +393,63 @@ Rules:
 
   throw new Error('All Gemini models failed for vocab validation');
 }
+
+// ===== Batch Vocab Audit =====
+
+export interface BatchAuditItem {
+  vocabId: string;
+  original: { word: string; meaning: string; type: string };
+  corrected: { word: string; meaning: string; partOfSpeech: string; ipa: string };
+  notes: string[];
+}
+
+export interface BatchAuditResult {
+  items: BatchAuditItem[]; // only items with errors
+  totalScanned: number;
+  totalErrors: number;
+}
+
+export async function batchAuditVocabWithGemini(
+  vocabs: Array<{ id: string; word: string; meaning: string; type: string }>,
+  onProgress?: (scanned: number, total: number) => void,
+): Promise<BatchAuditResult> {
+  const items: BatchAuditItem[] = [];
+  let scanned = 0;
+
+  for (const v of vocabs) {
+    try {
+      const result = await validateVocabWithGemini({
+        word: v.word,
+        meaning: v.meaning,
+        type: v.type,
+      });
+
+      if (result.hasErrors) {
+        // Only include if the corrected version actually differs
+        const wordChanged = result.corrected.word.toLowerCase() !== v.word.toLowerCase();
+        const meaningChanged = result.corrected.meaning !== v.meaning;
+        const typeChanged = result.corrected.partOfSpeech.toLowerCase() !== v.type.toLowerCase();
+
+        if (wordChanged || meaningChanged || typeChanged) {
+          items.push({
+            vocabId: v.id,
+            original: { word: v.word, meaning: v.meaning, type: v.type },
+            corrected: result.corrected,
+            notes: result.notes,
+          });
+        }
+      }
+    } catch {
+      // Skip individual failures during batch audit
+    }
+
+    scanned++;
+    onProgress?.(scanned, vocabs.length);
+  }
+
+  return {
+    items,
+    totalScanned: scanned,
+    totalErrors: items.length,
+  };
+}

@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
-import { Plus, Upload, FileText, Trash2, Check, FileUp, Loader2, Sparkles, Volume2, AlertTriangle, X, ArrowRight } from 'lucide-react';
+import { Plus, Upload, FileText, Trash2, Check, FileUp, Loader2, Sparkles, Volume2, AlertTriangle, X } from 'lucide-react';
 import { useVocab } from '@/context/VocabContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { useToast } from '@/components/Toast';
@@ -113,12 +113,12 @@ export function AddVocabulary() {
         await saveWord(word.trim(), type.trim(), meaning.trim());
         show(t('aiValidationPerfect'), 'success');
       } else {
-        // Has errors — show correction modal
+        // Has errors — show correction modal (DO NOT SAVE)
         setValidationResult(result);
       }
     } catch {
-      // Fallback: save original input on API failure
-      await saveWord(word.trim(), type.trim(), meaning.trim());
+      // API failure: show warning, do NOT save invalid data
+      show(t('aiValidationFailed'), 'error');
     }
     setValidating(false);
   };
@@ -129,11 +129,6 @@ export function AddVocabulary() {
     setValidating(false);
     setValidationResult(null);
     await saveWord(corrected.word, corrected.partOfSpeech, corrected.meaning);
-  };
-
-  const handleKeepOriginal = async () => {
-    setValidationResult(null);
-    await saveWord(word.trim(), type.trim(), meaning.trim());
   };
 
   const handleCancelValidation = () => {
@@ -438,12 +433,6 @@ export function AddVocabulary() {
               >
                 <Check className="w-4 h-4" />
                 {t('aiValidationApply')}
-              </button>
-              <button
-                onClick={handleKeepOriginal}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
-              >
-                {t('aiValidationKeepOriginal')}
               </button>
               <button
                 onClick={handleCancelValidation}

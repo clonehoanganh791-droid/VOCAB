@@ -79,7 +79,7 @@ export const translations = {
     deleteFromPreview: 'Remove',
 
     // AI Validation
-    aiValidating: 'AI is checking vocabulary accuracy...',
+    aiValidating: 'AI is validating spelling & meaning...',
     aiValidationTitle: 'AI detected & suggested corrections',
     aiValidationYourInput: 'Your input',
     aiValidationSuggestion: 'AI suggestion',
@@ -90,6 +90,15 @@ export const translations = {
     aiValidationPerfect: 'Vocabulary is accurate! Added to your list',
     aiValidationPartOfSpeech: 'Part of speech',
     aiValidationIPA: 'IPA',
+    aiValidationFailed: 'AI validation failed. Please check your connection and try again.',
+    aiBatchAudit: 'Normalize vocabulary',
+    aiBatchAuditing: 'AI is scanning all vocabulary...',
+    aiBatchAuditTitle: 'Batch audit results',
+    aiBatchAuditDesc: 'The following words have issues. Review and apply corrections.',
+    aiBatchAuditNone: 'All words are correct! No issues found.',
+    aiBatchAuditApplyAll: 'Apply all corrections',
+    aiBatchAuditApplied: (n: number) => `${n} words updated successfully`,
+    aiBatchAuditProgress: (n: number, total: number) => `Scanning ${n}/${total}...`,
 
     // Vocab Chest
     searchWords: 'Search words...',
@@ -327,17 +336,26 @@ export const translations = {
     deleteFromPreview: 'Xóa',
 
     // AI Validation
-    aiValidating: 'AI đang kiểm tra từ vựng...',
-    aiValidationTitle: 'AI phát hiện & Gợi ý chuẩn hóa từ vựng',
+    aiValidating: 'AI đang thẩm định chính tả & ngữ nghĩa...',
+    aiValidationTitle: 'Xác nhận chuẩn hóa từ vựng',
     aiValidationYourInput: 'Bản bạn đã nhập',
     aiValidationSuggestion: 'AI đề xuất sửa lại',
     aiValidationNotes: 'Ghi chú lỗi',
-    aiValidationApply: 'Áp dụng sửa đổi & Lưu từ',
+    aiValidationApply: 'Đồng ý sửa & Lưu',
     aiValidationKeepOriginal: 'Vẫn giữ nguyên như tôi nhập',
-    aiValidationCancel: 'Hủy bỏ',
+    aiValidationCancel: 'Hủy',
     aiValidationPerfect: 'Từ vựng chuẩn xác! Đã thêm vào danh sách',
     aiValidationPartOfSpeech: 'Loại từ',
     aiValidationIPA: 'Phiên âm IPA',
+    aiValidationFailed: 'AI thẩm định thất bại. Vui lòng kiểm tra kết nối và thử lại.',
+    aiBatchAudit: 'Chuẩn hóa từ vựng',
+    aiBatchAuditing: 'AI đang quét toàn bộ từ vựng...',
+    aiBatchAuditTitle: 'Kết quả quét & chuẩn hóa',
+    aiBatchAuditDesc: 'Các từ sau có vấn đề. Xem lại và áp dụng sửa đổi.',
+    aiBatchAuditNone: 'Tất cả từ đều chuẩn! Không phát hiện vấn đề.',
+    aiBatchAuditApplyAll: 'Cập nhật tất cả',
+    aiBatchAuditApplied: (n: number) => `Đã cập nhật ${n} từ thành công`,
+    aiBatchAuditProgress: (n: number, total: number) => `Đang quét ${n}/${total}...`,
 
     // Vocab Chest
     searchWords: 'Tìm từ...',

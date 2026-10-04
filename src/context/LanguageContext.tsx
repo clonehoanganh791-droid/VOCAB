@@ -8,7 +8,8 @@ interface LanguageContextValue {
   setLang: (lang: Language) => void;
   toggleLang: () => void;
   t: (key: TranslationKey) => string;
-  tFn: (key: 'toastImported' | 'toastMigrated' | 'wordsCount', n: number) => string;
+  tFn: (key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied', n: number) => string;
+  tFn2: (key: 'aiBatchAuditProgress', a: number, b: number) => string;
 }
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
@@ -33,13 +34,18 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     return getT(lang)[key] as string;
   }, [lang]);
 
-  const tFn = useCallback((key: 'toastImported' | 'toastMigrated' | 'wordsCount', n: number) => {
+  const tFn = useCallback((key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied', n: number) => {
     const fn = getT(lang)[key] as unknown as (n: number) => string;
     return fn(n);
   }, [lang]);
 
+  const tFn2 = useCallback((key: 'aiBatchAuditProgress', a: number, b: number) => {
+    const fn = getT(lang)[key] as unknown as (a: number, b: number) => string;
+    return fn(a, b);
+  }, [lang]);
+
   return (
-    <LanguageContext.Provider value={{ lang, setLang, toggleLang, t, tFn }}>
+    <LanguageContext.Provider value={{ lang, setLang, toggleLang, t, tFn, tFn2 }}>
       {children}
     </LanguageContext.Provider>
   );
