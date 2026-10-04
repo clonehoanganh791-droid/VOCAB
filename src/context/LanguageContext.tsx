@@ -8,7 +8,7 @@ interface LanguageContextValue {
   setLang: (lang: Language) => void;
   toggleLang: () => void;
   t: (key: TranslationKey) => string;
-  tFn: (key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied' | 'aiBatchAuditAutoApplied', n: number) => string;
+  tFn: (key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied' | 'aiBatchAuditAutoApplied' | 'aiMergedDuplicates', n: number) => string;
   tFn2: (key: 'aiBatchAuditProgress' | 'aiBatchNormalized', a: number, b: number) => string;
   tFnStr: (key: 'aiAutoCorrected', a: string, b: string) => string;
 }
@@ -35,7 +35,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     return getT(lang)[key] as string;
   }, [lang]);
 
-  const tFn = useCallback((key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied' | 'aiBatchAuditAutoApplied', n: number) => {
+  const tFn = useCallback((key: 'toastImported' | 'toastMigrated' | 'wordsCount' | 'aiBatchAuditApplied' | 'aiBatchAuditAutoApplied' | 'aiMergedDuplicates', n: number) => {
     const fn = getT(lang)[key] as unknown as (n: number) => string;
     return fn(n);
   }, [lang]);

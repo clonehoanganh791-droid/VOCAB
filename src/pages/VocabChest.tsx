@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Sparkles, Loader2 } from 'lucide-react';
+import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Loader2, Wand2 } from 'lucide-react';
 import { useVocab } from '@/context/VocabContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { useToast } from '@/components/Toast';
@@ -128,19 +128,44 @@ export function VocabChest() {
         show(t('aiBatchAuditNone'), 'success');
       } else {
         // Auto-apply all corrections immediately
-        let count = 0;
+        let fixedCount = 0;
         for (const item of result.items) {
           const { error } = await updateVocab(item.vocabId, {
             word: item.corrected.word,
             type: item.corrected.partOfSpeech,
             meaning: item.corrected.meaning,
           });
-          if (!error) count++;
+          if (!error) fixedCount++;
         }
-        show(tFn('aiBatchAuditAutoApplied', count), 'success');
+
+        // Merge duplicates: after correction, some words may now collide
+        // Re-read current vocabs from context (updateVocab already updated state)
+        const wordMap = new Map<string, string>(); // lowercase word -> first id kept
+        const dupIds: string[] = [];
+        for (const v of vocabs) {
+          const key = v.word.toLowerCase();
+          if (wordMap.has(key)) {
+            dupIds.push(v.id);
+          } else {
+            wordMap.set(key, v.id);
+          }
+        }
+        let mergedCount = 0;
+        if (dupIds.length > 0) {
+          const { error: delError } = await deleteVocabs(dupIds);
+          if (!delError) {
+            mergedCount = dupIds.length;
+          }
+        }
+
+        if (mergedCount > 0) {
+          show(`${tFn('aiBatchAuditAutoApplied', fixedCount)} — ${tFn('aiMergedDuplicates', mergedCount)}`, 'success');
+        } else {
+          show(tFn('aiBatchAuditAutoApplied', fixedCount), 'success');
+        }
       }
     } catch {
-      show(t('aiValidationFailed'), 'error');
+      show(t('aiGeminiConnectionError'), 'error');
     }
     setAuditing(false);
     setAuditProgress(null);
@@ -198,23 +223,6 @@ export function VocabChest() {
           <span className="text-sm font-semibold text-slate-500">{t('categories')}</span>
           <span className="text-lg font-bold text-teal-600">{chestGroups.length}</span>
         </div>
-        <button
-          onClick={handleBatchAudit}
-          disabled={auditing || vocabs.length === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold text-sm hover:from-amber-600 hover:to-orange-600 transition-all shadow-sm disabled:opacity-50"
-        >
-          {auditing ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {auditProgress ? tFn2('aiBatchAuditProgress', auditProgress.scanned, auditProgress.total) : t('aiBatchAuditing')}
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              {t('aiBatchAudit')}
-            </>
-          )}
-        </button>
       </div>
 
       {/* Chest folder cards */}
@@ -250,6 +258,23 @@ export function VocabChest() {
             placeholder={t('searchWords')}
           />
         </div>
+        <button
+          onClick={handleBatchAudit}
+          disabled={auditing || vocabs.length === 0}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold text-sm hover:from-amber-600 hover:to-orange-600 transition-all shadow-sm disabled:opacity-50 whitespace-nowrap"
+        >
+          {auditing ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              {auditProgress ? tFn2('aiBatchAuditProgress', auditProgress.scanned, auditProgress.total) : t('aiBatchAuditing')}
+            </>
+          ) : (
+            <>
+              <Wand2 className="w-4 h-4" />
+              {t('aiCleanupSpellErrors')}
+            </>
+          )}
+        </button>
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}

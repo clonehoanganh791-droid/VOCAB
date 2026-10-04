@@ -103,6 +103,9 @@ export const translations = {
     aiAutoCorrected: (from: string, to: string) => `Auto-corrected: ${from} ➔ ${to}`,
     aiBatchNormalized: (total: number, corrected: number) => `Added ${total} words (${corrected} auto-corrected)`,
     aiBatchAuditAutoApplied: (n: number) => `Auto-fixed ${n} words`,
+    aiCleanupSpellErrors: 'Fix spelling errors',
+    aiGeminiConnectionError: 'Cannot connect to Gemini to check vocabulary. Please check your network connection or API key.',
+    aiMergedDuplicates: (n: number) => `Merged ${n} duplicate words`,
 
     // Vocab Chest
     searchWords: 'Search words...',
@@ -364,6 +367,9 @@ export const translations = {
     aiAutoCorrected: (from: string, to: string) => `Đã tự động sửa: ${from} ➔ ${to}`,
     aiBatchNormalized: (total: number, corrected: number) => `Đã thêm ${total} từ (Đã tự động chuẩn hóa ${corrected} từ có lỗi chính tả/nghĩa)`,
     aiBatchAuditAutoApplied: (n: number) => `Đã tự động sửa ${n} từ`,
+    aiCleanupSpellErrors: 'Dọn dẹp lỗi chính tả',
+    aiGeminiConnectionError: 'Không thể kết nối với Gemini để kiểm tra từ vựng. Vui lòng kiểm tra lại kết nối mạng hoặc API Key',
+    aiMergedDuplicates: (n: number) => `Đã gộp ${n} từ trùng lặp`,
 
     // Vocab Chest
     searchWords: 'Tìm từ...',
