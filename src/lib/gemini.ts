@@ -271,3 +271,125 @@ Rules:
 
   throw lastError || new Error('All Gemini models failed');
 }
+
+// ===== Vocab Validation =====
+
+export interface VocabValidationResult {
+  hasErrors: boolean;
+  original: { word: string; meaning: string };
+  corrected: {
+    word: string;
+    meaning: string;
+    partOfSpeech: string;
+    ipa: string;
+  };
+  isMeaningMismatch: boolean;
+  notes: string[];
+}
+
+const vocabValidationSchema = {
+  type: Type.OBJECT,
+  properties: {
+    hasErrors: { type: Type.BOOLEAN },
+    original: {
+      type: Type.OBJECT,
+      properties: {
+        word: { type: Type.STRING },
+        meaning: { type: Type.STRING },
+      },
+      required: ['word', 'meaning'],
+    },
+    corrected: {
+      type: Type.OBJECT,
+      properties: {
+        word: { type: Type.STRING },
+        meaning: { type: Type.STRING },
+        partOfSpeech: { type: Type.STRING },
+        ipa: { type: Type.STRING },
+      },
+      required: ['word', 'meaning', 'partOfSpeech', 'ipa'],
+    },
+    isMeaningMismatch: { type: Type.BOOLEAN },
+    notes: { type: Type.ARRAY, items: { type: Type.STRING } },
+  },
+  required: ['hasErrors', 'original', 'corrected', 'isMeaningMismatch', 'notes'],
+};
+
+export async function validateVocabWithGemini(params: {
+  word: string;
+  meaning: string;
+  type: string;
+}): Promise<VocabValidationResult> {
+  const { word, meaning, type } = params;
+
+  const prompt = `Act as a professional bilingual lexicographer (English - Vietnamese). Inspect the user's input:
+- English input: ${word}
+- Vietnamese meaning: ${meaning}
+- User-provided part of speech: ${type || '(empty)'}
+
+Analyze and return raw JSON strictly following this schema:
+{
+  "hasErrors": boolean, // true if there is ANY typo in EN/VI, incorrect meaning match, or wrong part of speech
+  "original": {
+    "word": "${word}",
+    "meaning": "${meaning}"
+  },
+  "corrected": {
+    "word": string, // Corrected English spelling
+    "meaning": string, // Corrected Vietnamese spelling or accurate translation if meaning was mismatched
+    "partOfSpeech": string, // 'n', 'v', 'adj', 'adv', 'phr', etc.
+    "ipa": string // Standard IPA transcription (e.g. "/ˈhaɪ.pəʊ.krɪsi/")
+  },
+  "isMeaningMismatch": boolean, // true if the English word does NOT mean what the user typed in Vietnamese
+  "notes": ["Specific notes in Vietnamese explaining what was corrected, e.g., 'Sửa lỗi chính tả tiếng Anh', 'Sửa dấu tiếng Việt', 'Nghĩa tiếng Việt chưa khớp với từ'"]
+}
+
+Rules:
+- If the input is already correct, set hasErrors to false and still fill "corrected" with the correct values (same as original).
+- Always provide IPA transcription.
+- notes can be empty array if no errors.
+- Keep notes concise and in Vietnamese.`;
+
+  for (const model of MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+          responseSchema: vocabValidationSchema,
+        },
+      });
+
+      const text = response.text;
+      if (!text) throw new Error('Empty Gemini response');
+
+      const parsed = safeParseJSON(text);
+
+      return {
+        hasErrors: (parsed.hasErrors as boolean) ?? false,
+        original: {
+          word: ((parsed.original as { word: string })?.word) || word,
+          meaning: ((parsed.original as { meaning: string })?.meaning) || meaning,
+        },
+        corrected: {
+          word: (parsed.corrected as { word: string })?.word || word,
+          meaning: (parsed.corrected as { meaning: string })?.meaning || meaning,
+          partOfSpeech: (parsed.corrected as { partOfSpeech: string })?.partOfSpeech || type || '',
+          ipa: (parsed.corrected as { ipa: string })?.ipa || '',
+        },
+        isMeaningMismatch: (parsed.isMeaningMismatch as boolean) ?? false,
+        notes: (parsed.notes as string[]) || [],
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error('All Gemini models failed for vocab validation');
+}

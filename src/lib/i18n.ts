@@ -78,6 +78,19 @@ export const translations = {
     noWordsParsed: 'No words found. Check the format.',
     deleteFromPreview: 'Remove',
 
+    // AI Validation
+    aiValidating: 'AI is checking vocabulary accuracy...',
+    aiValidationTitle: 'AI detected & suggested corrections',
+    aiValidationYourInput: 'Your input',
+    aiValidationSuggestion: 'AI suggestion',
+    aiValidationNotes: 'Notes',
+    aiValidationApply: 'Apply corrections & Save',
+    aiValidationKeepOriginal: 'Keep my original input',
+    aiValidationCancel: 'Cancel',
+    aiValidationPerfect: 'Vocabulary is accurate! Added to your list',
+    aiValidationPartOfSpeech: 'Part of speech',
+    aiValidationIPA: 'IPA',
+
     // Vocab Chest
     searchWords: 'Search words...',
     allCategories: 'All Categories',
@@ -312,6 +325,19 @@ export const translations = {
     fillAllFields: 'Vui lòng điền đầy đủ các trường',
     noWordsParsed: 'Không tìm thấy từ nào. Kiểm tra định dạng.',
     deleteFromPreview: 'Xóa',
+
+    // AI Validation
+    aiValidating: 'AI đang kiểm tra từ vựng...',
+    aiValidationTitle: 'AI phát hiện & Gợi ý chuẩn hóa từ vựng',
+    aiValidationYourInput: 'Bản bạn đã nhập',
+    aiValidationSuggestion: 'AI đề xuất sửa lại',
+    aiValidationNotes: 'Ghi chú lỗi',
+    aiValidationApply: 'Áp dụng sửa đổi & Lưu từ',
+    aiValidationKeepOriginal: 'Vẫn giữ nguyên như tôi nhập',
+    aiValidationCancel: 'Hủy bỏ',
+    aiValidationPerfect: 'Từ vựng chuẩn xác! Đã thêm vào danh sách',
+    aiValidationPartOfSpeech: 'Loại từ',
+    aiValidationIPA: 'Phiên âm IPA',
 
     // Vocab Chest
     searchWords: 'Tìm từ...',
