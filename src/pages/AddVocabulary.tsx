@@ -123,8 +123,20 @@ export function AddVocabulary() {
         resetForm();
       }
     } catch {
-      // Gemini failed: do NOT save raw uncorrected input
-      show(t('aiGeminiConnectionError'), 'error');
+      // Gemini failed: save user's original input with notice (graceful fallback)
+      const finalCategory = resolveChest(chestChoice, customChest, word.trim(), meaning.trim());
+      const { error } = await addVocab({
+        word: word.trim(),
+        type: type.trim(),
+        meaning: meaning.trim(),
+        category: finalCategory,
+      });
+      if (error) {
+        show(t('toastError'), 'error');
+      } else {
+        show(t('aiSavedUnvalidated'), 'success');
+        resetForm();
+      }
     }
     setNormalizing(false);
   };
@@ -224,8 +236,17 @@ export function AddVocabulary() {
         setFileName('');
       }
     } catch {
-      // Gemini failed: do NOT save raw uncorrected entries
-      show(t('aiGeminiConnectionError'), 'error');
+      // Gemini failed: save original selected vocabs with notice (graceful fallback)
+      const { error, count } = await addManyVocabs(selected);
+      if (error) {
+        show(t('toastError'), 'error');
+      } else {
+        show(`${tFn('toastImported', count)} — ${t('aiSavedUnvalidated')}`, 'success');
+        setParsed([]);
+        setSelectedIndices(new Set());
+        setBulkText('');
+        setFileName('');
+      }
     }
     setNormalizing(false);
   };

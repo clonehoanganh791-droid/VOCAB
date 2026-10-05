@@ -266,7 +266,7 @@ export function VocabChest() {
           {auditing ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              {auditProgress ? tFn2('aiBatchAuditProgress', auditProgress.scanned, auditProgress.total) : t('aiBatchAuditing')}
+              {auditProgress ? tFn2('aiCleanupProgress', auditProgress.scanned, auditProgress.total) : t('aiBatchAuditing')}
             </>
           ) : (
             <>

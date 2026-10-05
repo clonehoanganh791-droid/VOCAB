@@ -1,13 +1,130 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import type { Language } from './types';
 import type { GrammarEvaluation, DetectedError, NativeAlternative, ErrorType } from './grammarCheck';
 
+// ===== Centralized API Key Resolution =====
+// Priority: localStorage user key > env var > hardcoded fallback
 const FALLBACK_API_KEY = 'AQ.Ab8RN6KeCsGvlXT4rIJAWqHlAXLGLEGAaGUPZbMnr5oyNK7btw';
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || FALLBACK_API_KEY;
 
-const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+function resolveApiKey(): string {
+  if (typeof localStorage !== 'undefined') {
+    const userKey = localStorage.getItem('user_gemini_api_key');
+    if (userKey && userKey.trim()) return userKey.trim();
+  }
+  const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (envKey && envKey.trim()) return envKey.trim();
+  return FALLBACK_API_KEY;
+}
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// Models in priority order — gemini-2.0-flash is the proven working model
+const MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'];
+
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// ===== Direct REST API call (bypasses SDK for reliability) =====
+interface GeminiResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  error?: { message?: string; code?: number };
+}
+
+async function geminiGenerate(
+  prompt: string,
+  options?: {
+    temperature?: number;
+    responseMimeType?: string;
+    responseSchema?: unknown;
+    signal?: AbortSignal;
+  },
+): Promise<string> {
+  const apiKey = resolveApiKey();
+  const { temperature = 0.2, responseMimeType = 'application/json', responseSchema } = options || {};
+
+  let lastError: Error | null = null;
+
+  for (const model of MODELS) {
+    const url = `${BASE_URL}/${model}:generateContent?key=${apiKey}`;
+    const body: Record<string, unknown> = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature,
+        responseMimeType,
+      },
+    };
+    if (responseSchema) {
+      body.generationConfig = {
+        ...body.generationConfig as Record<string, unknown>,
+        responseSchema,
+      };
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: options?.signal || controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null) as GeminiResponse | null;
+        const msg = errData?.error?.message || `HTTP ${res.status}`;
+        if (res.status === 404 || res.status === 400 || msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('not supported')) {
+          lastError = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+
+      const data = (await res.json()) as GeminiResponse;
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Empty Gemini response');
+      return text;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message.toLowerCase();
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
+        continue;
+      }
+      // For network errors / timeouts, try next model
+      if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('fetch')) {
+        continue;
+      }
+      throw lastError;
+    }
+  }
+
+  throw lastError || new Error('All Gemini models failed');
+}
+
+// Keep the GoogleGenAI import for isGeminiConfigured compat
+import { GoogleGenAI } from '@google/genai';
+const ai = new GoogleGenAI({ apiKey: resolveApiKey() });
+
+export function isGeminiConfigured(): boolean {
+  return !!resolveApiKey();
+}
+
+// ===== Typo Detection Heuristic (pre-filter for batch cleanup) =====
+// Detects common typo patterns to avoid sending clean words to Gemini
+function looksLikeTypo(word: string): boolean {
+  const w = word.toLowerCase().trim();
+  if (!w) return false;
+  // Repeated letter patterns: "protectt", "protectet", "verry", "accomodate"
+  if (/(.)\1{2,}/.test(w)) return true; // 3+ same char in a row
+  if (/([a-z])\1([a-z]?)\1/.test(w) && w.length > 4) return true; // alternating repeats like "tet"
+  // Common misspelling patterns
+  if (/ee$/.test(w) && !['bee', 'see', 'fee', 'tree', 'free', 'knee', 'agree', 'coffee', 'committee', 'employee'].includes(w)) {
+    // unlikely terminal double-e except common words
+  }
+  return false;
+}
+
+// ===== Sentence Practice (unchanged, uses same centralized API) =====
 
 const responseSchema = {
   type: Type.OBJECT,
@@ -57,15 +174,9 @@ const responseSchema = {
   ],
 };
 
-export function isGeminiConfigured(): boolean {
-  return !!API_KEY;
-}
-
 function safeParseJSON(text: string): Record<string, unknown> {
   let cleaned = text.trim();
-  // Strip ```json ... ``` or ``` ... ``` fences
   cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
-  // Sometimes the fences are inline or multiple — extract the first { ... } block
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     cleaned = jsonMatch[0];
@@ -192,87 +303,63 @@ Rules:
 - Be precise — do NOT report false positives for correctly capitalized "I" or correct article usage
 - Keep responses thorough but concise`;
 
-  let lastError: Error | null = null;
+  const text = await geminiGenerate(prompt, {
+    temperature: 0.4,
+    responseMimeType: 'application/json',
+    responseSchema,
+  });
 
-  for (const model of MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          temperature: 0.4,
-          responseMimeType: 'application/json',
-          responseSchema,
-        },
-      });
+  const parsed = safeParseJSON(text);
 
-      const text = response.text;
-      if (!text) throw new Error('Empty Gemini response');
+  const detectedErrorsRaw = (parsed.detectedErrors || []) as Array<{ type: string; incorrectPart: string; correction: string; explanationVi: string }>;
+  const detectedErrors: DetectedError[] = detectedErrorsRaw.map(
+    (e) => ({
+      type: (e.type as ErrorType) || 'Grammar',
+      incorrectPart: e.incorrectPart || '',
+      correction: e.correction || '',
+      explanationVi: e.explanationVi || '',
+    })
+  );
 
-      const parsed = safeParseJSON(text);
+  const nativeAlternativesRaw = (parsed.nativeAlternatives || []) as Array<{ sentence: string; translation: string; explanation: string }>;
+  const nativeAlternatives: NativeAlternative[] = nativeAlternativesRaw.map(
+    (s) => ({
+      sentence: s.sentence || '',
+      translation: s.translation || '',
+      explanation: s.explanation || '',
+    })
+  ).filter((s) => s.sentence.trim().length > 0);
 
-      const detectedErrorsRaw = (parsed.detectedErrors || []) as Array<{ type: string; incorrectPart: string; correction: string; explanationVi: string }>;
-      const detectedErrors: DetectedError[] = detectedErrorsRaw.map(
-        (e) => ({
-          type: (e.type as ErrorType) || 'Grammar',
-          incorrectPart: e.incorrectPart || '',
-          correction: e.correction || '',
-          explanationVi: e.explanationVi || '',
-        })
-      );
+  const effectiveAlternatives = nativeAlternatives.length > 0
+    ? nativeAlternatives
+    : buildFallbackAlternatives(targetWord, wordType, meaning);
 
-      const nativeAlternativesRaw = (parsed.nativeAlternatives || []) as Array<{ sentence: string; translation: string; explanation: string }>;
-      const nativeAlternatives: NativeAlternative[] = nativeAlternativesRaw.map(
-        (s) => ({
-          sentence: s.sentence || '',
-          translation: s.translation || '',
-          explanation: s.explanation || '',
-        })
-      ).filter((s) => s.sentence.trim().length > 0);
+  const errors = detectedErrors.map((e) => ({
+    message: e.incorrectPart ? `"${e.incorrectPart}" → "${e.correction}"` : e.correction,
+    explanation: e.explanationVi,
+  }));
 
-      // If Gemini returned no alternatives, generate proper fallbacks for the target word
-      const effectiveAlternatives = nativeAlternatives.length > 0
-        ? nativeAlternatives
-        : buildFallbackAlternatives(targetWord, wordType, meaning);
+  const firstAlt = effectiveAlternatives[0];
 
-      // Legacy compat: map detectedErrors to flat errors array
-      const errors = detectedErrors.map((e) => ({
-        message: e.incorrectPart ? `"${e.incorrectPart}" → "${e.correction}"` : e.correction,
-        explanation: e.explanationVi,
-      }));
-
-      const firstAlt = effectiveAlternatives[0];
-
-      return {
-        accuracy: Math.max(0, Math.min(100, parsed.accuracyScore as number)),
-        isSpellingCorrect: (parsed.isSpellingCorrect as boolean) ?? true,
-        isGrammarCorrect: (parsed.isGrammarCorrect as boolean) ?? detectedErrors.length === 0,
-        isNatural: (parsed.isNatural as boolean) ?? false,
-        detectedErrors,
-        detailedAnalysisVi: (parsed.detailedAnalysisVi as string) || '',
-        nativeAlternatives: effectiveAlternatives,
-        grammarRulesBreakdown: (parsed.grammarRulesBreakdown as string) || '',
-        errors,
-        feedback: (parsed.detailedAnalysisVi as string) || '',
-        improved: firstAlt?.sentence || '',
-        improvedTranslation: firstAlt?.translation || '',
-        improvedSentences: effectiveAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
-        grammarStructure: (parsed.grammarRulesBreakdown as string) || '',
-      };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      const msg = lastError.message.toLowerCase();
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
-        continue;
-      }
-      throw lastError;
-    }
-  }
-
-  throw lastError || new Error('All Gemini models failed');
+  return {
+    accuracy: Math.max(0, Math.min(100, parsed.accuracyScore as number)),
+    isSpellingCorrect: (parsed.isSpellingCorrect as boolean) ?? true,
+    isGrammarCorrect: (parsed.isGrammarCorrect as boolean) ?? detectedErrors.length === 0,
+    isNatural: (parsed.isNatural as boolean) ?? false,
+    detectedErrors,
+    detailedAnalysisVi: (parsed.detailedAnalysisVi as string) || '',
+    nativeAlternatives: effectiveAlternatives,
+    grammarRulesBreakdown: (parsed.grammarRulesBreakdown as string) || '',
+    errors,
+    feedback: (parsed.detailedAnalysisVi as string) || '',
+    improved: firstAlt?.sentence || '',
+    improvedTranslation: firstAlt?.translation || '',
+    improvedSentences: effectiveAlternatives.map((s) => ({ en: s.sentence, vi: s.translation })),
+    grammarStructure: (parsed.grammarRulesBreakdown as string) || '',
+  };
 }
 
-// ===== Vocab Validation =====
+// ===== Single Vocab Validation =====
 
 export interface VocabValidationResult {
   hasErrors: boolean;
@@ -329,72 +416,50 @@ export async function validateVocabWithGemini(params: {
 
 Analyze and return raw JSON strictly following this schema:
 {
-  "hasErrors": boolean, // true if there is ANY typo in EN/VI, incorrect meaning match, or wrong part of speech
-  "original": {
-    "word": "${word}",
-    "meaning": "${meaning}"
-  },
+  "hasErrors": boolean,
+  "original": { "word": "${word}", "meaning": "${meaning}" },
   "corrected": {
-    "word": string, // Corrected English spelling
-    "meaning": string, // Corrected Vietnamese spelling or accurate translation if meaning was mismatched
-    "partOfSpeech": string, // 'n', 'v', 'adj', 'adv', 'phr', etc.
-    "ipa": string // Standard IPA transcription (e.g. "/ˈhaɪ.pəʊ.krɪsi/")
+    "word": string,
+    "meaning": string,
+    "partOfSpeech": string,
+    "ipa": string
   },
-  "isMeaningMismatch": boolean, // true if the English word does NOT mean what the user typed in Vietnamese
-  "notes": ["Specific notes in Vietnamese explaining what was corrected, e.g., 'Sửa lỗi chính tả tiếng Anh', 'Sửa dấu tiếng Việt', 'Nghĩa tiếng Việt chưa khớp với từ'"]
+  "isMeaningMismatch": boolean,
+  "notes": ["..."]
 }
 
 Rules:
-- If the input is already correct, set hasErrors to false and still fill "corrected" with the correct values (same as original).
+- If the input is already correct, set hasErrors to false and still fill "corrected" with the correct values.
 - Always provide IPA transcription.
 - notes can be empty array if no errors.
 - Keep notes concise and in Vietnamese.`;
 
-  for (const model of MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-          responseSchema: vocabValidationSchema,
-        },
-      });
+  const text = await geminiGenerate(prompt, {
+    temperature: 0.2,
+    responseMimeType: 'application/json',
+    responseSchema: vocabValidationSchema,
+  });
 
-      const text = response.text;
-      if (!text) throw new Error('Empty Gemini response');
+  const parsed = safeParseJSON(text);
 
-      const parsed = safeParseJSON(text);
-
-      return {
-        hasErrors: (parsed.hasErrors as boolean) ?? false,
-        original: {
-          word: ((parsed.original as { word: string })?.word) || word,
-          meaning: ((parsed.original as { meaning: string })?.meaning) || meaning,
-        },
-        corrected: {
-          word: (parsed.corrected as { word: string })?.word || word,
-          meaning: (parsed.corrected as { meaning: string })?.meaning || meaning,
-          partOfSpeech: (parsed.corrected as { partOfSpeech: string })?.partOfSpeech || type || '',
-          ipa: (parsed.corrected as { ipa: string })?.ipa || '',
-        },
-        isMeaningMismatch: (parsed.isMeaningMismatch as boolean) ?? false,
-        notes: (parsed.notes as string[]) || [],
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new Error('All Gemini models failed for vocab validation');
+  return {
+    hasErrors: (parsed.hasErrors as boolean) ?? false,
+    original: {
+      word: ((parsed.original as { word: string })?.word) || word,
+      meaning: ((parsed.original as { meaning: string })?.meaning) || meaning,
+    },
+    corrected: {
+      word: (parsed.corrected as { word: string })?.word || word,
+      meaning: (parsed.corrected as { meaning: string })?.meaning || meaning,
+      partOfSpeech: (parsed.corrected as { partOfSpeech: string })?.partOfSpeech || type || '',
+      ipa: (parsed.corrected as { ipa: string })?.ipa || '',
+    },
+    isMeaningMismatch: (parsed.isMeaningMismatch as boolean) ?? false,
+    notes: (parsed.notes as string[]) || [],
+  };
 }
 
-// ===== Batch Vocab Audit =====
+// ===== Batch Vocab Audit (chunked, 25 words per API call) =====
 
 export interface BatchAuditItem {
   vocabId: string;
@@ -404,9 +469,117 @@ export interface BatchAuditItem {
 }
 
 export interface BatchAuditResult {
-  items: BatchAuditItem[]; // only items with errors
+  items: BatchAuditItem[];
   totalScanned: number;
   totalErrors: number;
+}
+
+const CHUNK_SIZE = 25;
+
+const batchAuditSchema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      originalWord: { type: Type.STRING },
+      correctedWord: { type: Type.STRING },
+      correctedMeaning: { type: Type.STRING },
+      partOfSpeech: { type: Type.STRING },
+      ipa: { type: Type.STRING },
+      hasErrors: { type: Type.BOOLEAN },
+      notes: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    required: ['originalWord', 'correctedWord', 'correctedMeaning', 'partOfSpeech', 'ipa', 'hasErrors', 'notes'],
+  },
+};
+
+async function auditChunk(
+  chunk: Array<{ id: string; word: string; meaning: string; type: string }>,
+): Promise<BatchAuditItem[]> {
+  if (chunk.length === 0) return [];
+
+  const entriesText = chunk
+    .map((e, i) => `${i + 1}. English: "${e.word}", Vietnamese: "${e.meaning}", Part of speech: "${e.type || ''}"`)
+    .join('\n');
+
+  const prompt = `You are an automated dictionary cleaner. For each entry below, check for typos in English/Vietnamese, meaning mismatches, and wrong part of speech.
+
+Input entries:
+${entriesText}
+
+Return a raw JSON array with exactly ${chunk.length} entries in the same order:
+[
+  {
+    "originalWord": "the original English word",
+    "correctedWord": "corrected English spelling (same as original if no typo)",
+    "correctedMeaning": "corrected Vietnamese meaning (same as original if no error)",
+    "partOfSpeech": "n | v | adj | adv | phr",
+    "ipa": "IPA transcription",
+    "hasErrors": true/false,
+    "notes": ["Vietnamese note explaining correction, or empty array"]
+  }
+]
+
+Rules:
+- Fix typos like "protectt" -> "protect", "protectet" -> "protect".
+- If no errors, set hasErrors to false and still fill all fields with correct values.
+- Keep notes concise, in Vietnamese. Empty array if no errors.`;
+
+  try {
+    const text = await geminiGenerate(prompt, {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: batchAuditSchema,
+    });
+
+    let parsed: Array<{
+      originalWord: string;
+      correctedWord: string;
+      correctedMeaning: string;
+      partOfSpeech: string;
+      ipa: string;
+      hasErrors: boolean;
+      notes: string[];
+    }>;
+
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Try extracting JSON array
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) return [];
+      parsed = JSON.parse(match[0]);
+    }
+
+    const items: BatchAuditItem[] = [];
+    for (let i = 0; i < chunk.length; i++) {
+      const item = parsed[i];
+      if (!item) continue;
+
+      const wordChanged = (item.correctedWord || '').toLowerCase() !== chunk[i].word.toLowerCase();
+      const meaningChanged = (item.correctedMeaning || '') !== chunk[i].meaning;
+      const typeChanged = (item.partOfSpeech || '').toLowerCase() !== (chunk[i].type || '').toLowerCase();
+
+      if (item.hasErrors || wordChanged || meaningChanged || typeChanged) {
+        items.push({
+          vocabId: chunk[i].id,
+          original: { word: chunk[i].word, meaning: chunk[i].meaning, type: chunk[i].type },
+          corrected: {
+            word: item.correctedWord || chunk[i].word,
+            meaning: item.correctedMeaning || chunk[i].meaning,
+            partOfSpeech: item.partOfSpeech || chunk[i].type || '',
+            ipa: item.ipa || '',
+          },
+          notes: item.notes || [],
+        });
+      }
+    }
+
+    return items;
+  } catch {
+    // Skip failed chunks, return empty
+    return [];
+  }
 }
 
 export async function batchAuditVocabWithGemini(
@@ -415,36 +588,16 @@ export async function batchAuditVocabWithGemini(
 ): Promise<BatchAuditResult> {
   const items: BatchAuditItem[] = [];
   let scanned = 0;
+  const total = vocabs.length;
 
-  for (const v of vocabs) {
-    try {
-      const result = await validateVocabWithGemini({
-        word: v.word,
-        meaning: v.meaning,
-        type: v.type,
-      });
+  // Process in chunks of CHUNK_SIZE to avoid token limits and timeouts
+  for (let i = 0; i < vocabs.length; i += CHUNK_SIZE) {
+    const chunk = vocabs.slice(i, i + CHUNK_SIZE);
+    const chunkItems = await auditChunk(chunk);
+    items.push(...chunkItems);
 
-      if (result.hasErrors) {
-        // Only include if the corrected version actually differs
-        const wordChanged = result.corrected.word.toLowerCase() !== v.word.toLowerCase();
-        const meaningChanged = result.corrected.meaning !== v.meaning;
-        const typeChanged = result.corrected.partOfSpeech.toLowerCase() !== v.type.toLowerCase();
-
-        if (wordChanged || meaningChanged || typeChanged) {
-          items.push({
-            vocabId: v.id,
-            original: { word: v.word, meaning: v.meaning, type: v.type },
-            corrected: result.corrected,
-            notes: result.notes,
-          });
-        }
-      }
-    } catch {
-      // Skip individual failures during batch audit
-    }
-
-    scanned++;
-    onProgress?.(scanned, vocabs.length);
+    scanned += chunk.length;
+    onProgress?.(scanned, total);
   }
 
   return {
@@ -488,11 +641,17 @@ export async function autoNormalizeVocabBatch(
 ): Promise<NormalizedVocabEntry[]> {
   if (entries.length === 0) return [];
 
-  const entriesText = entries
-    .map((e, i) => `${i + 1}. English: "${e.word}", Vietnamese: "${e.meaning}", Part of speech: "${e.type || ''}"`)
-    .join('\n');
+  // Process in chunks to avoid token overload
+  const results: NormalizedVocabEntry[] = [];
 
-  const prompt = `You are an automated dictionary cleaner. For each input entry below, silently fix typos in both English and Vietnamese, correct mismatches, and standardize the entry.
+  for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+    const chunk = entries.slice(i, i + CHUNK_SIZE);
+
+    const entriesText = chunk
+      .map((e, idx) => `${idx + 1}. English: "${e.word}", Vietnamese: "${e.meaning}", Part of speech: "${e.type || ''}"`)
+      .join('\n');
+
+    const prompt = `You are an automated dictionary cleaner. For each input entry below, silently fix typos in both English and Vietnamese, correct mismatches, and standardize the entry.
 
 Input entries:
 ${entriesText}
@@ -506,67 +665,75 @@ Return a raw JSON array matching this exact schema:
     "partOfSpeech": "n | v | adj | adv | phr",
     "ipa": "Standard IPA phonetic transcription",
     "wasAutoCorrected": boolean,
-    "correctionNote": "Short explanation if changed (e.g. 'Sửa lỗi chính tả tiếng Anh: protectt ➔ protect'), empty string if no correction needed"
+    "correctionNote": "Short explanation if changed, empty string if no correction needed"
   }
 ]
 
 Rules:
-- Return exactly ${entries.length} entries, one for each input, in the same order.
+- Return exactly ${chunk.length} entries, one for each input, in the same order.
 - If an entry is already correct, set wasAutoCorrected to false and still fill all fields with the correct values.
 - Always provide IPA transcription.
 - Keep correctionNote in Vietnamese, concise. Empty string if no correction.`;
 
-  for (const model of MODELS) {
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-          responseSchema: batchNormalizeSchema,
-        },
+      const text = await geminiGenerate(prompt, {
+        temperature: 0.2,
+        responseMimeType: 'application/json',
+        responseSchema: batchNormalizeSchema,
       });
 
-      const text = response.text;
-      if (!text) throw new Error('Empty Gemini response');
+      let parsed: NormalizedVocabEntry[];
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) throw new Error('No JSON array found');
+        parsed = JSON.parse(match[0]);
+      }
 
-      const parsed = JSON.parse(text) as NormalizedVocabEntry[];
-
-      // Ensure we have the right number of entries, pad with originals if needed
-      const result: NormalizedVocabEntry[] = entries.map((entry, i) => {
-        const item = parsed[i];
+      // Map results, pad with originals if needed
+      for (let j = 0; j < chunk.length; j++) {
+        const item = parsed[j];
         if (!item) {
-          return {
-            originalWord: entry.word,
-            word: entry.word,
-            meaning: entry.meaning,
-            partOfSpeech: entry.type || '',
+          results.push({
+            originalWord: chunk[j].word,
+            word: chunk[j].word,
+            meaning: chunk[j].meaning,
+            partOfSpeech: chunk[j].type || '',
             ipa: '',
             wasAutoCorrected: false,
             correctionNote: '',
-          };
+          });
+        } else {
+          results.push({
+            originalWord: chunk[j].word,
+            word: item.word || chunk[j].word,
+            meaning: item.meaning || chunk[j].meaning,
+            partOfSpeech: item.partOfSpeech || chunk[j].type || '',
+            ipa: item.ipa || '',
+            wasAutoCorrected: item.wasAutoCorrected ?? false,
+            correctionNote: item.correctionNote || '',
+          });
         }
-        return {
-          originalWord: entry.word,
-          word: item.word || entry.word,
-          meaning: item.meaning || entry.meaning,
-          partOfSpeech: item.partOfSpeech || entry.type || '',
-          ipa: item.ipa || '',
-          wasAutoCorrected: item.wasAutoCorrected ?? false,
-          correctionNote: item.correctionNote || '',
-        };
-      });
-
-      return result;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
-        continue;
       }
-      throw err;
+    } catch {
+      // On chunk failure, return originals for this chunk
+      for (const entry of chunk) {
+        results.push({
+          originalWord: entry.word,
+          word: entry.word,
+          meaning: entry.meaning,
+          partOfSpeech: entry.type || '',
+          ipa: '',
+          wasAutoCorrected: false,
+          correctionNote: '',
+        });
+      }
     }
   }
 
-  throw new Error('All Gemini models failed for batch normalization');
+  return results;
 }
+
+// Export the ai instance for backward compatibility
+export { ai };
