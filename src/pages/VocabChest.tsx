@@ -151,17 +151,17 @@ export function VocabChest() {
           show(`${t('toastError')} (${failedUpdates.length} updates failed)`, 'error');
         }
 
-        // Merge duplicates: re-fetch fresh data after updates
-        await refresh();
-        const freshVocabs = [...vocabs];
-        const wordMap = new Map<string, string>();
+        // Merge duplicates: after corrections, find words that now collide.
+        // Build a map from the correction results to detect post-correction duplicates.
+        const correctedWords = new Map<string, string>(); // lowercase corrected word -> first vocabId
         const dupIds: string[] = [];
-        for (const v of freshVocabs) {
-          const key = v.word.toLowerCase().trim();
-          if (wordMap.has(key)) {
-            dupIds.push(v.id);
+        for (const item of result.items) {
+          const key = item.corrected.word.toLowerCase().trim();
+          if (correctedWords.has(key)) {
+            // This is a duplicate after correction — delete it
+            dupIds.push(item.vocabId);
           } else {
-            wordMap.set(key, v.id);
+            correctedWords.set(key, item.vocabId);
           }
         }
         let mergedCount = 0;
