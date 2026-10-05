@@ -735,5 +735,151 @@ Rules:
   return results;
 }
 
+// ===== Normalize Selected Vocab (for checkbox-selected items) =====
+
+export interface SelectedNormalizationResult {
+  id: string;
+  originalWord: string;
+  correctedWord: string;
+  correctedMeaning: string;
+  partOfSpeech: string;
+  wasChanged: boolean;
+  isDuplicateOf?: string; // correctedWord if it matches another entry
+}
+
+const selectedNormalizeSchema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      originalWord: { type: Type.STRING },
+      correctedWord: { type: Type.STRING },
+      correctedMeaning: { type: Type.STRING },
+      partOfSpeech: { type: Type.STRING },
+      wasChanged: { type: Type.BOOLEAN },
+    },
+    required: ['originalWord', 'correctedWord', 'correctedMeaning', 'partOfSpeech', 'wasChanged'],
+  },
+};
+
+export async function normalizeSelectedVocabs(
+  vocabs: Array<{ id: string; word: string; meaning: string; type: string }>,
+): Promise<SelectedNormalizationResult[]> {
+  if (vocabs.length === 0) return [];
+
+  const results: SelectedNormalizationResult[] = [];
+
+  // Process in chunks of 25 to avoid token overload
+  for (let i = 0; i < vocabs.length; i += CHUNK_SIZE) {
+    const chunk = vocabs.slice(i, i + CHUNK_SIZE);
+
+    const entriesText = chunk
+      .map((e, idx) => `${idx + 1}. English: "${e.word}", Vietnamese: "${e.meaning}", Part of speech: "${e.type || ''}"`)
+      .join('\n');
+
+    const prompt = `You are an expert English-Vietnamese lexicographer. Standardize these vocabulary entries. Fix English spelling, provide accurate Vietnamese meanings, correct parts of speech, and merge duplicate concepts.
+
+Input entries:
+${entriesText}
+
+Return a raw JSON array with exactly ${chunk.length} entries in the same order:
+[
+  {
+    "originalWord": "the original English word",
+    "correctedWord": "corrected English spelling",
+    "correctedMeaning": "accurate Vietnamese translation",
+    "partOfSpeech": "n | v | adj | adv | phr",
+    "wasChanged": true
+  }
+]
+
+CRITICAL RULES:
+- Fix English spelling typos: "protectt" -> "protect", "protectet" -> "protect"
+- Fix meaning mismatches: if "apple" has meaning "Bảo vệ", correct it to "Quả táo"
+- If two entries resolve to the same corrected word (e.g. both "protectet" and "protectt" become "protect"), keep the first one's data for both, but set wasChanged=true for the one that was actually corrected.
+- If an entry is already correct, set wasChanged to false.
+- Always provide the accurate Vietnamese meaning for the corrected English word.
+- partOfSpeech must be: n, v, adj, adv, or phr.`;
+
+    try {
+      const text = await geminiGenerate(prompt, {
+        temperature: 0.2,
+        responseMimeType: 'application/json',
+        responseSchema: selectedNormalizeSchema,
+      });
+
+      let parsed: Array<{
+        originalWord: string;
+        correctedWord: string;
+        correctedMeaning: string;
+        partOfSpeech: string;
+        wasChanged: boolean;
+      }>;
+
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) throw new Error('No JSON array found');
+        parsed = JSON.parse(match[0]);
+      }
+
+      // Track corrected words across chunks to detect duplicates
+      const correctedWordMap = new Map<string, string>(); // lowercase correctedWord -> first id
+
+      for (let j = 0; j < chunk.length; j++) {
+        const item = parsed[j];
+        const vocab = chunk[j];
+
+        if (!item) {
+          results.push({
+            id: vocab.id,
+            originalWord: vocab.word,
+            correctedWord: vocab.word,
+            correctedMeaning: vocab.meaning,
+            partOfSpeech: vocab.type || '',
+            wasChanged: false,
+          });
+          continue;
+        }
+
+        const correctedWord = item.correctedWord || vocab.word;
+        const correctedLower = correctedWord.toLowerCase();
+
+        // Check if this corrected word already exists (duplicate after correction)
+        const isDuplicateOf = correctedWordMap.get(correctedLower);
+
+        results.push({
+          id: vocab.id,
+          originalWord: vocab.word,
+          correctedWord,
+          correctedMeaning: item.correctedMeaning || vocab.meaning,
+          partOfSpeech: item.partOfSpeech || vocab.type || '',
+          wasChanged: item.wasChanged ?? (correctedWord.toLowerCase() !== vocab.word.toLowerCase() || (item.correctedMeaning || '') !== vocab.meaning),
+          isDuplicateOf,
+        });
+
+        if (!isDuplicateOf) {
+          correctedWordMap.set(correctedLower, vocab.id);
+        }
+      }
+    } catch {
+      // On chunk failure, return originals unchanged
+      for (const vocab of chunk) {
+        results.push({
+          id: vocab.id,
+          originalWord: vocab.word,
+          correctedWord: vocab.word,
+          correctedMeaning: vocab.meaning,
+          partOfSpeech: vocab.type || '',
+          wasChanged: false,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
 // Export the ai instance for backward compatibility
 export { ai };

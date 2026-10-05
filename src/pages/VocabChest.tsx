@@ -1,16 +1,16 @@
 import { useState, useMemo } from 'react';
-import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Loader2, Wand2 } from 'lucide-react';
+import { Search, Trash2, Pencil, FolderOpen, X, Check, ArrowRight, Folder, Loader2, Wand2, Sparkles } from 'lucide-react';
 import { useVocab } from '@/context/VocabContext';
 import { useLanguage } from '@/context/LanguageContext';
 import { useToast } from '@/components/Toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AudioControl } from '@/components/AudioControl';
 import { DEFAULT_CHESTS, FALLBACK_CHEST_KEY } from '@/lib/categorizer';
-import { batchAuditVocabWithGemini } from '@/lib/gemini';
+import { batchAuditVocabWithGemini, normalizeSelectedVocabs } from '@/lib/gemini';
 import type { Vocabulary } from '@/lib/types';
 
 export function VocabChest() {
-  const { vocabs, deleteVocabs, updateVocab } = useVocab();
+  const { vocabs, deleteVocabs, updateVocab, refresh } = useVocab();
   const { t, tFn, tFn2, lang } = useLanguage();
   const { show } = useToast();
 
@@ -26,6 +26,10 @@ export function VocabChest() {
   // Batch audit state
   const [auditing, setAuditing] = useState(false);
   const [auditProgress, setAuditProgress] = useState<{ scanned: number; total: number } | null>(null);
+
+  // Selected normalization state
+  const [normalizingSelected, setNormalizingSelected] = useState(false);
+  const [normalizingCount, setNormalizingCount] = useState(0);
 
   // Build chest groups with counts
   const chestGroups = useMemo(() => {
@@ -129,21 +133,31 @@ export function VocabChest() {
       } else {
         // Auto-apply all corrections immediately
         let fixedCount = 0;
+        const failedUpdates: string[] = [];
         for (const item of result.items) {
           const { error } = await updateVocab(item.vocabId, {
             word: item.corrected.word,
             type: item.corrected.partOfSpeech,
             meaning: item.corrected.meaning,
           });
-          if (!error) fixedCount++;
+          if (error) {
+            failedUpdates.push(item.vocabId);
+          } else {
+            fixedCount++;
+          }
         }
 
-        // Merge duplicates: after correction, some words may now collide
-        // Re-read current vocabs from context (updateVocab already updated state)
-        const wordMap = new Map<string, string>(); // lowercase word -> first id kept
+        if (failedUpdates.length > 0) {
+          show(`${t('toastError')} (${failedUpdates.length} updates failed)`, 'error');
+        }
+
+        // Merge duplicates: re-fetch fresh data after updates
+        await refresh();
+        const freshVocabs = [...vocabs];
+        const wordMap = new Map<string, string>();
         const dupIds: string[] = [];
-        for (const v of vocabs) {
-          const key = v.word.toLowerCase();
+        for (const v of freshVocabs) {
+          const key = v.word.toLowerCase().trim();
           if (wordMap.has(key)) {
             dupIds.push(v.id);
           } else {
@@ -169,6 +183,69 @@ export function VocabChest() {
     }
     setAuditing(false);
     setAuditProgress(null);
+  };
+
+  const handleNormalizeSelected = async () => {
+    const selectedIds = Array.from(selected);
+    if (selectedIds.length === 0) return;
+
+    const selectedVocabs = vocabs.filter((v) => selectedIds.includes(v.id));
+    setNormalizingSelected(true);
+    setNormalizingCount(selectedVocabs.length);
+
+    try {
+      const results = await normalizeSelectedVocabs(
+        selectedVocabs.map((v) => ({ id: v.id, word: v.word, meaning: v.meaning, type: v.type })),
+      );
+
+      // Apply corrections to database
+      let fixedCount = 0;
+      const idsToDelete: string[] = [];
+      const failedUpdates: string[] = [];
+
+      for (const result of results) {
+        if (result.isDuplicateOf) {
+          // This entry is a duplicate after correction — mark for deletion
+          idsToDelete.push(result.id);
+          fixedCount++;
+          continue;
+        }
+
+        if (result.wasChanged) {
+          const { error } = await updateVocab(result.id, {
+            word: result.correctedWord,
+            type: result.partOfSpeech,
+            meaning: result.correctedMeaning,
+          });
+          if (error) {
+            failedUpdates.push(result.id);
+          } else {
+            fixedCount++;
+          }
+        }
+      }
+
+      // Delete duplicates
+      if (idsToDelete.length > 0) {
+        const { error: delError } = await deleteVocabs(idsToDelete);
+        if (delError) {
+          show(`${t('toastError')} — ${tFn('aiMergedDuplicates', idsToDelete.length)}`, 'error');
+        }
+      }
+
+      if (failedUpdates.length > 0) {
+        show(`${t('toastError')} (${failedUpdates.length} failed)`, 'error');
+      }
+
+      // Force refresh to update UI immediately
+      await refresh();
+      show(tFn('aiFixedAndSaved', fixedCount), 'success');
+      setSelected(new Set());
+    } catch {
+      show(t('aiGeminiConnectionError'), 'error');
+    }
+    setNormalizingSelected(false);
+    setNormalizingCount(0);
   };
 
   // Chest display name
@@ -369,6 +446,15 @@ export function VocabChest() {
           <span className="text-sm font-semibold">{selected.size} {t('deleteSelected').toLowerCase()}</span>
           <div className="w-px h-6 bg-slate-600" />
           <button
+            onClick={handleNormalizeSelected}
+            disabled={normalizingSelected}
+            className="flex items-center gap-1.5 text-sm font-semibold text-amber-300 hover:text-amber-200 transition-colors"
+          >
+            {normalizingSelected ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            {tFn('aiFixSelectedCount', selected.size)}
+          </button>
+          <div className="w-px h-6 bg-slate-600" />
+          <button
             onClick={() => setMoveOpen(true)}
             className="flex items-center gap-1.5 text-sm font-semibold text-sky-300 hover:text-sky-200 transition-colors"
           >
@@ -451,6 +537,19 @@ export function VocabChest() {
           onSave={handleSaveEdit}
           onClose={() => setEditTarget(null)}
         />
+      )}
+
+      {/* Normalizing selected spinner modal */}
+      {normalizingSelected && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-8 text-center animate-scale-in">
+            <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center mb-4">
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">{tFn('aiNormalizingSelected', normalizingCount)}</h3>
+            <p className="text-sm text-slate-500">...</p>
+          </div>
+        </div>
       )}
 
       <ConfirmDialog

@@ -108,6 +108,10 @@ export const translations = {
     aiMergedDuplicates: (n: number) => `Merged ${n} duplicate words`,
     aiSavedUnvalidated: 'Saved (not AI-validated due to connection error)',
     aiCleanupProgress: (n: number, total: number) => `Cleaning: ${n}/${total} words...`,
+    aiFixSelected: 'Fix with AI',
+    aiFixSelectedCount: (n: number) => `Fix ${n} selected with AI`,
+    aiNormalizingSelected: (n: number) => `Normalizing ${n} selected words via Gemini...`,
+    aiFixedAndSaved: (n: number) => `Successfully fixed and saved ${n} words to database!`,
 
     // Vocab Chest
     searchWords: 'Search words...',
@@ -374,6 +378,10 @@ export const translations = {
     aiMergedDuplicates: (n: number) => `Đã gộp ${n} từ trùng lặp`,
     aiSavedUnvalidated: 'Đã lưu từ (Chưa qua thẩm định AI do lỗi kết nối)',
     aiCleanupProgress: (n: number, total: number) => `Đang dọn dẹp: Đã xử lý ${n}/${total} từ...`,
+    aiFixSelected: 'Sửa bằng AI',
+    aiFixSelectedCount: (n: number) => `Sửa ${n} từ đã chọn bằng AI`,
+    aiNormalizingSelected: (n: number) => `Đang chuẩn hóa ${n} từ đã chọn qua Gemini...`,
+    aiFixedAndSaved: (n: number) => `Đã sửa thành công ${n} từ và lưu vào cơ sở dữ liệu!`,
 
     // Vocab Chest
     searchWords: 'Tìm từ...',

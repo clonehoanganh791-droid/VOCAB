@@ -99,7 +99,24 @@ export function VocabProvider({ children }: { children: ReactNode }) {
   }, [user, refresh]);
 
   const updateVocab = useCallback(async (id: string, updates: Partial<Pick<Vocabulary, 'word' | 'type' | 'meaning' | 'category'>>) => {
-    if (!user) return { error: 'Not authenticated' };
+    if (!user) {
+      // Handle localStorage update for non-authenticated users
+      const local = getLocalVocabs();
+      if (id.startsWith('local-')) {
+        const idx = parseInt(id.replace('local-', ''), 10);
+        if (isNaN(idx) || idx < 0 || idx >= local.length) {
+          return { error: 'Item not found' };
+        }
+        if (updates.word !== undefined) local[idx].word = updates.word;
+        if (updates.type !== undefined) local[idx].type = updates.type;
+        if (updates.meaning !== undefined) local[idx].meaning = updates.meaning;
+        if (updates.category !== undefined) local[idx].category = updates.category;
+        saveLocalVocabs(local);
+        await refresh();
+        return { error: null };
+      }
+      return { error: 'Item not found' };
+    }
 
     const { error } = await supabase.from('vocabularies').update(updates).eq('id', id);
     if (!error) await refresh();
