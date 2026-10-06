@@ -87,7 +87,7 @@ async function geminiGenerate(
   let lastError: Error | null = null;
 
   for (const model of MODELS) {
-    const url = `${BASE_URL}/${model}:generateContent?key=${apiKey}`;
+    const url = `${BASE_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const generationConfig: Record<string, unknown> = {
       temperature,
       responseMimeType,
@@ -106,7 +106,10 @@ async function geminiGenerate(
 
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
         body: JSON.stringify(body),
         signal: options?.signal || controller.signal,
       });
