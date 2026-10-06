@@ -119,12 +119,24 @@ export function VocabChest() {
   };
 
   const handleBatchAudit = async () => {
+    // If checkboxes are selected, only process selected words.
+    // If none selected, limit to first 15 words to avoid token overload.
+    let wordsToAudit: Array<{ id: string; word: string; meaning: string; type: string }>;
+    if (selected.size > 0) {
+      const selectedIds = Array.from(selected);
+      wordsToAudit = vocabs
+        .filter((v) => selectedIds.includes(v.id))
+        .map((v) => ({ id: v.id, word: v.word, meaning: v.meaning, type: v.type }));
+    } else {
+      wordsToAudit = vocabs.slice(0, 15).map((v) => ({ id: v.id, word: v.word, meaning: v.meaning, type: v.type }));
+    }
+
     setAuditing(true);
-    setAuditProgress({ scanned: 0, total: vocabs.length });
+    setAuditProgress({ scanned: 0, total: wordsToAudit.length });
 
     try {
       const result = await batchAuditVocabWithGemini(
-        vocabs.map((v) => ({ id: v.id, word: v.word, meaning: v.meaning, type: v.type })),
+        wordsToAudit,
         (scanned, total) => setAuditProgress({ scanned, total }),
       );
 
@@ -152,13 +164,11 @@ export function VocabChest() {
         }
 
         // Merge duplicates: after corrections, find words that now collide.
-        // Build a map from the correction results to detect post-correction duplicates.
-        const correctedWords = new Map<string, string>(); // lowercase corrected word -> first vocabId
+        const correctedWords = new Map<string, string>();
         const dupIds: string[] = [];
         for (const item of result.items) {
           const key = item.corrected.word.toLowerCase().trim();
           if (correctedWords.has(key)) {
-            // This is a duplicate after correction — delete it
             dupIds.push(item.vocabId);
           } else {
             correctedWords.set(key, item.vocabId);
@@ -172,14 +182,19 @@ export function VocabChest() {
           }
         }
 
+        // Force refresh to update UI immediately
+        await refresh();
+
         if (mergedCount > 0) {
           show(`${tFn('aiBatchAuditAutoApplied', fixedCount)} — ${tFn('aiMergedDuplicates', mergedCount)}`, 'success');
         } else {
           show(tFn('aiBatchAuditAutoApplied', fixedCount), 'success');
         }
       }
-    } catch {
-      show(t('aiGeminiConnectionError'), 'error');
+    } catch (error) {
+      console.error('Gemini Cleanup Full Error:', error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      show(`Lỗi API: ${errMsg || 'Không xác định'}`, 'error');
     }
     setAuditing(false);
     setAuditProgress(null);
@@ -241,8 +256,10 @@ export function VocabChest() {
       await refresh();
       show(tFn('aiFixedAndSaved', fixedCount), 'success');
       setSelected(new Set());
-    } catch {
-      show(t('aiGeminiConnectionError'), 'error');
+    } catch (error) {
+      console.error('Gemini Normalize Selected Full Error:', error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      show(`Lỗi API: ${errMsg || 'Không xác định'}`, 'error');
     }
     setNormalizingSelected(false);
     setNormalizingCount(0);

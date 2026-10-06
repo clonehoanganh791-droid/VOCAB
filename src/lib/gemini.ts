@@ -116,8 +116,10 @@ async function geminiGenerate(
       if (!res.ok) {
       const errData = await res.json().catch(() => null) as GeminiResponse | null;
       const msg = errData?.error?.message || `HTTP ${res.status}`;
-      console.error(`[Gemini] ${model} error:`, msg);
-      if (res.status === 404 || res.status === 400 || msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('not supported')) {
+      console.error(`[Gemini] ${model} error:`, msg, errData);
+      // Only 404 means model not found — try next model
+      // 400 means bad request (malformed body, bad key, etc.) — throw immediately with real error
+      if (res.status === 404 || msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('not supported')) {
         lastError = new Error(msg);
         continue;
       }
@@ -136,9 +138,10 @@ async function geminiGenerate(
       lastError = err instanceof Error ? err : new Error(String(err));
       const msg = lastError.message.toLowerCase();
       console.error(`[Gemini] ${model} exception:`, lastError.message);
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('400') || msg.includes('not supported')) {
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('not supported')) {
         continue;
       }
+      // For network errors / timeouts, try next model
       if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('fetch')) {
         continue;
       }
